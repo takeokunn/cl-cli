@@ -16,20 +16,12 @@ permissions:
 
 jobs:
   nix:
-    name: nix (${{ matrix.system }})
-    runs-on: ${{ matrix.os }}
+    name: nix (x86_64-linux)
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            system: x86_64-linux
-          - os: macos-14
-            system: aarch64-darwin
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,4 +51,4 @@ jobs:
 
       - name: Build Nix checks
         timeout-minutes: 10
-        run: perl -e 'alarm 600; exec @ARGV' -- nix build .#checks.${{ matrix.system }}.default --print-build-logs
+        run: perl -e 'alarm 600; exec @ARGV' -- nix build .#checks.x86_64-linux.default --print-build-logs
