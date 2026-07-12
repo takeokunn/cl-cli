@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Usage question
+    url: https://github.com/takeokunn/cl-cli/discussions
+    about: Ask usage questions in Discussions; see SUPPORT.md for expectations.
+  - name: Security report
+    url: https://github.com/takeokunn/cl-cli/security/policy
+    about: Report vulnerabilities privately; do not open a public issue.

@@ -1,0 +1,71 @@
+(defparameter +cl-cli-repository-url+
+  "https://github.com/takeokunn/cl-cli")
+
+(defparameter +cl-cli-issues-url+
+  "https://github.com/takeokunn/cl-cli/issues")
+
+(defparameter +cl-cli-readme+
+  (when *load-pathname*
+    (uiop:read-file-string (merge-pathnames #P"README.md" *load-pathname*))))
+
+(asdf:defsystem "cl-cli"
+  :description "Composable Common Lisp CLI parsing and dispatch primitives."
+  :long-description +cl-cli-readme+
+  :author "takeokunn"
+  :maintainer "takeokunn"
+  :homepage +cl-cli-repository-url+
+  :bug-tracker +cl-cli-issues-url+
+  :source-control (:git +cl-cli-repository-url+)
+  :license "MIT"
+  :version "0.1.0"
+  :depends-on ("uiop")
+  :in-order-to ((asdf:test-op (asdf:test-op "cl-cli/tests")))
+  :serial t
+  :components ((:file "src/package")
+               (:file "src/conditions")
+               (:file "src/core")
+               (:file "src/model-helpers")
+               (:file "src/model")
+               (:file "src/model-app")
+               (:file "src/util")
+               (:file "src/parser-lookup")
+               (:file "src/parser-option-consumption")
+               (:file "src/parser-consumption")
+               (:file "src/parser-values")
+               (:file "src/parser-core")
+               (:file "src/parser-dispatch")
+               (:file "src/help-renderers")
+               (:file "src/help-printers")
+               (:file "src/help-commands")
+               (:file "src/runtime")
+               (:file "src/completion-helpers")
+               (:file "src/completion-renderer-helpers")
+               (:file "src/completion-renderers-bash")
+               (:file "src/completion-renderers-zsh")
+               (:file "src/completion-renderers-fish")
+               (:file "src/completion-commands")))
+
+(asdf:defsystem "cl-cli/tests"
+  :description "Test system for cl-cli."
+  :author "takeokunn"
+  :license "MIT"
+  :version "0.1.0"
+  :depends-on ("cl-cli")
+  :serial t
+  :components ((:file "tests/package")
+               (:file "tests/test-fixtures")
+               (:file "examples/consumer-migrations")
+               (:file "tests/test-support")
+               (:file "tests/cases-parse")
+               (:file "tests/cases-options")
+               (:file "tests/cases-validation-specification")
+               (:file "tests/cases-validation-values")
+               (:file "tests/cases-validation-boolean")
+               (:file "tests/cases-validation-relations")
+               (:file "tests/cases-help")
+               (:file "tests/cases-completion-bash")
+               (:file "tests/cases-completion-zsh")
+               (:file "tests/cases-completion-fish")
+               (:file "tests/cases-completion-commands"))
+  :perform (asdf:test-op (op c)
+             (uiop:symbol-call :cl-cli/tests :run-tests)))

@@ -1,0 +1,295 @@
+(in-package :cl-cli)
+
+(defstruct (option-spec
+            (:constructor %make-option-spec)
+            (:conc-name "OPTION-"))
+  key
+  names
+  negated-names
+  kind
+  description
+  value-name
+  default
+  env-vars
+  choices
+  completion-candidates
+  parser
+  required-p
+  requires
+  conflicts-with
+  multiple-p
+  default-present-p
+  consume-optional-value-p
+  stop-parsing-p
+  hidden-p)
+
+(defstruct (positional-spec
+            (:constructor %make-positional-spec)
+            (:conc-name "POSITIONAL-SPEC-"))
+  key
+  description
+  parser
+  default
+  default-present-p
+  required-p
+  rest-p)
+
+(defstruct (command-spec
+            (:constructor %make-command-spec)
+            (:conc-name "COMMAND-"))
+  name
+  aliases
+  group
+  description
+  examples
+  options
+  positionals
+  handler
+  hidden-p)
+
+(defstruct (app-spec
+            (:constructor %make-app-spec)
+            (:conc-name "APP-"))
+  name
+  version
+  summary
+  description
+  global-options
+  positionals
+  commands
+  default-command
+  handler
+  examples
+  help-footer)
+
+(defstruct (invocation
+            (:constructor %make-invocation)
+            (:conc-name "INVOCATION-"))
+  app
+  command
+  action
+  argv0
+  raw-argv
+  global-options
+  command-options
+  positionals
+  stdout
+  stderr)
+
+(defun %option-display-name (spec)
+  (option-token-display-name (first (option-names spec))))
+
+(defun resolve-related-option-spec (specs target)
+  (or (when (keywordp target)
+        (find target specs :key #'option-key :test #'eq))
+      (when (stringp target)
+        (find-if (lambda (spec)
+                   (member target (option-names spec) :test #'string=))
+                 specs))))
+
+(defun %validate-related-option-target (specs spec target relation)
+  (let ((resolved (resolve-related-option-spec specs target)))
+    (unless resolved
+      (signal-cli-error 'cli-invalid-specification
+                        (format nil "Unknown option in ~A for ~A: ~A"
+                                relation
+                                (%option-display-name spec)
+                                (option-relation-target-display-name target))))
+    (when (eq (option-key resolved) (option-key spec))
+      (signal-cli-error 'cli-invalid-specification
+                        (format nil "Option ~A cannot declare ~A itself."
+                                (%option-display-name spec)
+                                relation)))
+    resolved))
+
+(defun %validate-related-option-targets (specs spec relation targets)
+  (dolist (target targets)
+    (%validate-related-option-target specs spec target relation)))
+
+(defun validate-option-relationships-declared (specs)
+  (dolist (spec specs specs)
+    (%validate-related-option-targets specs spec "requires" (option-requires spec))
+    (%validate-related-option-targets specs spec "conflicts-with"
+                                      (option-conflicts-with spec))))
+
+(defun make-option (&key key name short aliases kind description value-name (default nil default-supplied-p)
+                      env-var env-vars choices completion-candidates parser required-p requires
+                      conflicts-with multiple-p
+                      consume-optional-value-p stop-parsing-p hidden-p)
+  "Create a parsed option specification.
+
+NAME is the long option name without leading dashes. SHORT may be a single
+character or short-name string. ALIASES is a list of additional option names."
+  (let* ((names (normalize-option-names name short aliases))
+         (names-present-p (not (null names)))
+         (resolved-key (or key
+                           (option-keyword (or name (first names)))))
+         (resolved-kind (or kind (if multiple-p :value :flag)))
+         (resolved-value-name (and value-name (princ-to-string value-name)))
+         (resolved-negated-names
+           (normalize-negated-option-names resolved-kind names))
+         (resolved-env-vars (normalize-env-vars env-var env-vars))
+         (resolved-choices (normalize-option-choices choices))
+         (resolved-completion-candidates
+           (normalize-option-completion-candidates completion-candidates))
+         (resolved-requires (normalize-option-relations requires))
+         (resolved-conflicts-with (normalize-option-relations conflicts-with))
+         (resolved-parser (or parser
+                              (ecase resolved-kind
+                                (:flag (lambda (value)
+                                         (declare (ignore value))
+                                         t))
+                                (:boolean (let ((display-name
+                                                  (if (= (length (first names)) 1)
+                                                      (format nil "-~A" (first names))
+                                                      (format nil "--~A" (first names)))))
+                                            (lambda (value)
+                                              (parse-boolean-designator value
+                                                                        display-name
+                                                                        resolved-key))))
+                                (:value #'identity)
+                                (:optional-value #'identity))))
+         (default-present-p default-supplied-p))
+    (unless names-present-p
+      (signal-cli-error 'cli-invalid-specification
+                        "An option needs at least one name."))
+    (validate-non-empty-strings names "Option names")
+    (when resolved-value-name
+      (validate-non-empty-strings (list resolved-value-name) "Option value names"))
+    (validate-option-multiplicity resolved-kind multiple-p)
+    (%make-option-spec :key resolved-key
+                       :names names
+                       :negated-names resolved-negated-names
+                       :kind resolved-kind
+                       :description (normalize-positional-description description)
+                       :value-name resolved-value-name
+                       :default default
+                       :env-vars resolved-env-vars
+                       :choices resolved-choices
+                       :completion-candidates resolved-completion-candidates
+                       :parser resolved-parser
+                       :required-p required-p
+                       :requires resolved-requires
+                       :conflicts-with resolved-conflicts-with
+                       :multiple-p multiple-p
+                       :default-present-p default-present-p
+                       :consume-optional-value-p consume-optional-value-p
+                       :stop-parsing-p stop-parsing-p
+                       :hidden-p hidden-p)))
+
+(defun make-positional (&key key name description parser (default nil default-supplied-p) required-p rest-p)
+  "Create a positional argument specification."
+  (when (and (null key)
+             (null name))
+    (signal-cli-error 'cli-invalid-specification
+                      "A positional needs a key or name."))
+  (when (and (null key)
+             (zerop (length (ensure-string name))))
+    (signal-cli-error 'cli-invalid-specification
+                      "A positional name must be non-empty."))
+  (let ((resolved-key (or key
+                          (option-keyword name)))
+        (spec (%make-positional-spec)))
+    (setf (positional-spec-key spec) resolved-key
+          (positional-spec-description spec) (normalize-positional-description description)
+          (positional-spec-parser spec) (or parser #'identity)
+          (positional-spec-default spec) default
+          (positional-spec-default-present-p spec) default-supplied-p
+          (positional-spec-required-p spec) required-p
+          (positional-spec-rest-p spec) rest-p)
+    spec))
+
+(defun make-command (&key name aliases group description examples options positionals handler hidden-p)
+  "Create a command specification."
+  (let* ((resolved-name (and name (canonical-name name)))
+         (resolved-aliases (normalize-command-aliases aliases)))
+    (when (or (null resolved-name)
+              (zerop (length resolved-name)))
+      (signal-cli-error 'cli-invalid-specification
+                        "A command needs a non-empty name."))
+    (validate-non-empty-strings resolved-aliases "Command aliases")
+    (%make-command-spec :name resolved-name
+                        :aliases resolved-aliases
+                        :group (normalize-command-group group)
+                        :description (normalize-positional-description description)
+                        :examples (normalize-example-strings examples)
+                        :options options
+                        :positionals positionals
+                        :handler handler
+                        :hidden-p hidden-p)))
+
+(defun %option-table-entries (spec)
+  (append (loop for name in (option-names spec)
+                collect (list name nil))
+          (loop for name in (option-negated-names spec)
+                collect (list name t))))
+
+(defun %validate-option-table (specs)
+  (let ((table (make-hash-table :test 'equal)))
+    (dolist (spec specs specs)
+      (dolist (entry (%option-table-entries spec))
+        (destructuring-bind (name negated-p) entry
+          (declare (ignore negated-p))
+          (let ((key (canonical-option-name name)))
+            (%register-table-entry table
+                                   key
+                                   t
+                                   "option name"
+                                   (option-token-display-name key))))))))
+
+(defun %validate-command-table (commands)
+  (let ((table (make-hash-table :test 'equal)))
+    (dolist (command commands table)
+      (%register-table-entry table
+                             (command-name command)
+                             t
+                             "command name"
+                             (command-name command))
+      (dolist (alias (command-aliases command))
+        (%register-table-entry table
+                               alias
+                               t
+                               "command name"
+                               alias)))))
+
+(defun %validate-positional-sequence (positionals owner-name)
+  (let ((seen-keys (make-hash-table :test 'eq))
+        (rest-seen-p nil))
+    (dolist (spec positionals positionals)
+      (let ((key (positional-spec-key spec)))
+        (when (gethash key seen-keys)
+          (signal-cli-error 'cli-invalid-specification
+                            (format nil "Duplicate positional key for ~A: ~A"
+                                    owner-name
+                                    key)))
+        (setf (gethash key seen-keys) t))
+      (when rest-seen-p
+        (signal-cli-error 'cli-invalid-specification
+                          (format nil "Rest positional for ~A must be last."
+                                  owner-name)))
+      (when (positional-spec-rest-p spec)
+        (setf rest-seen-p t)))))
+
+(defun %validate-app-spec (app)
+  (let* ((built-ins (option-specs-with-built-ins app nil))
+         (global-specs (append built-ins (app-global-options app)))
+         (command-table (%validate-command-table (app-commands app))))
+    (%validate-positional-sequence (app-positionals app)
+                                   (app-name app))
+    (validate-option-relationships-declared global-specs)
+    (%validate-option-table global-specs)
+    (dolist (command (app-commands app))
+      (%validate-positional-sequence (command-positionals command)
+                                     (command-name command))
+      (let ((command-specs (append built-ins
+                                   (app-global-options app)
+                                   (command-options command))))
+        (validate-option-relationships-declared command-specs)
+        (%validate-option-table command-specs)))
+    (when (and (app-default-command app)
+               (null (gethash (app-default-command app) command-table)))
+      (signal-cli-error 'cli-invalid-specification
+                        (format nil "Unknown :default-command for ~A: ~A"
+                                (app-name app)
+                                (app-default-command app)))))
+  app)

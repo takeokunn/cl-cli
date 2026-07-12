@@ -1,0 +1,18 @@
+# Nix build outputs
+result
+result-*
+
+# Common Lisp build artifacts
+*.fasl
+*.fas
+*.lib
+*.ufasl
+*.abcl
+*.lx64fsl
+*.dx64fsl
+
+# Editor / OS noise
+*~
+\#*\#
+.#*
+.DS_Store
