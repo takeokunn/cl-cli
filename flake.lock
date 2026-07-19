@@ -3,26 +3,34 @@
     "cl-prolog": {
       "flake": false,
       "locked": {
-        "path": "../cl-prolog",
-        "type": "path"
+        "lastModified": 1784437549,
+        "narHash": "sha256-1WRrmNeniD1w1euhGhOCEpQoPVum5M2G6JVESAHzW1w=",
+        "owner": "takeokunn",
+        "repo": "cl-prolog",
+        "rev": "b3049ad4f616e9b5cfc6987b1449b3f0920b1323",
+        "type": "github"
       },
       "original": {
-        "path": "../cl-prolog",
-        "type": "path"
-      },
-      "parent": []
+        "owner": "takeokunn",
+        "repo": "cl-prolog",
+        "type": "github"
+      }
     },
     "cl-weave": {
       "flake": false,
       "locked": {
-        "path": "../cl-weave",
-        "type": "path"
+        "lastModified": 1784453306,
+        "narHash": "sha256-Ff88QPdT2BKHSQF0HHeypPgvG0kQGBQXSilMyX2fMsY=",
+        "owner": "takeokunn",
+        "repo": "cl-weave",
+        "rev": "bf6b7876e08246b78b550642abf7c40a0c469c50",
+        "type": "github"
       },
       "original": {
-        "path": "../cl-weave",
-        "type": "path"
-      },
-      "parent": []
+        "owner": "takeokunn",
+        "repo": "cl-weave",
+        "type": "github"
+      }
     },
     "nixpkgs": {
       "locked": {

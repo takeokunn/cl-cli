@@ -4,11 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     cl-weave = {
-      url = "path:../cl-weave";
+      url = "github:takeokunn/cl-weave";
       flake = false;
     };
     cl-prolog = {
-      url = "path:../cl-prolog";
+      url = "github:takeokunn/cl-prolog";
       flake = false;
     };
   };
