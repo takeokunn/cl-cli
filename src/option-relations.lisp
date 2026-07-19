@@ -22,10 +22,7 @@
                              (:conflicts ?left ?right))))))
 
 (defun make-option-relation-rulebase (specs)
-  (let ((rulebase
-          (cl-prolog:make-rulebase
-           :clauses
-           (cl-prolog:rulebase-visible-clauses *option-relation-rules*))))
+  (let ((rulebase (cl-prolog:copy-rulebase *option-relation-rules*)))
     (dolist (spec specs rulebase)
       (dolist (target (option-requires spec))
         (let ((dependency (resolve-related-option-spec specs target)))
