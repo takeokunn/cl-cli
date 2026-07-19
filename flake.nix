@@ -15,13 +15,8 @@
 
   outputs = { self, nixpkgs, cl-weave, cl-prolog }:
     let
-      supportedSystems = [
-        "x86_64-linux"
-        "aarch64-linux"
-      ];
-      checkSystems = [ "x86_64-linux" ];
-      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      forCheckSystems = nixpkgs.lib.genAttrs checkSystems;
+      systems = [ "x86_64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
       clWeaveSourceDir = cl-weave.outPath;
       clPrologSourceDir = cl-prolog.outPath;
     in
@@ -41,7 +36,7 @@
           };
         });
 
-      checks = forCheckSystems (system:
+      checks = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
           makeLispCheck = implementation: package:
