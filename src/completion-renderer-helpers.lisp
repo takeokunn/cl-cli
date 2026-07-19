@@ -14,6 +14,12 @@
               (format out "        return 0~%")
               (format out "        ;;~%"))))))))
 
+(defun %completion-zsh-value-case-body (options)
+  (%completion-zsh-option-value-case-body options :attached-p nil))
+
+(defun %completion-zsh-attached-value-case-body (options)
+  (%completion-zsh-option-value-case-body options :attached-p t))
+
 (defun %completion-command-option-tokens (app command)
   (append (%completion-visible-option-tokens (app-global-options app))
           (when command
@@ -136,4 +142,11 @@
                 (and candidates
                      (%completion-shell-quote
                       (%completion-space-joined
-                       (%completion-option-candidate-values option))))))))
+                      (%completion-option-candidate-values option))))))))
+
+(defun %render-fish-option-lines (app options condition stream)
+  (dolist (option options)
+    (unless (option-hidden-p option)
+      (let ((arguments (%completion-fish-option-arguments option
+                                                           :condition condition)))
+        (%completion-fish-option-candidate-lines app option arguments stream)))))

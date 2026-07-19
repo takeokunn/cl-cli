@@ -1,27 +1,5 @@
 (in-package :cl-cli/tests)
 
-(defparameter *tests* nil)
-
-(defmacro deftest (name &body body)
-  `(progn
-     (push (list ',name (lambda () ,@body)) *tests*)
-     ',name))
-
-(defmacro deftest-with-fixture (name (binding fixture-form) &body body)
-  `(deftest ,name
-     (let ((,binding ,fixture-form))
-       ,@body
-       t)))
-
-(defmacro is (form &optional (message "Assertion failed"))
-  `(unless ,form
-     (error "~A: ~S" ,message ',form)))
-
-(defmacro signals (condition-type &body body)
-  `(handler-case (progn ,@body
-                     (error "Expected condition of type ~A" ',condition-type))
-     (,condition-type () t)))
-
 (defmacro signals-all (condition-type &body forms)
   `(progn
      ,@(loop for form in forms
@@ -38,12 +16,7 @@
          (,condition-type (,condition)
            (setf ,seen t)
            ,@body))
-       (is ,seen ,(format nil "Expected ~A." condition-type)))))
-
-(defun run-test-case (name thunk)
-  (format t "~&[RUN] ~A~%" name)
-  (funcall thunk)
-  (format t "[OK]  ~A~%" name))
+       (expect ,seen))))
 
 (defun app-help-text (app)
   (with-string-output (stream)
@@ -99,7 +72,7 @@
 (defmacro assert-searches* (text predicate &rest needles)
   `(progn
      ,@(loop for needle in needles
-             collect `(is (funcall ,predicate ,needle ,text)))))
+             collect `(expect (funcall ,predicate ,needle ,text)))))
 
 (defmacro assert-searches (text &rest needles)
   `(assert-searches* ,text #'search ,@needles))
@@ -111,8 +84,8 @@
   `(progn
      ,@(loop for (left right) on needles
              while right
-             collect `(is (< (search ,left ,text)
-                             (search ,right ,text))))))
+             collect `(expect (< (search ,left ,text)
+                                 (search ,right ,text))))))
 
 (defmacro plist-values= (invocation accessor expected-label &rest pairs)
   (let ((normalized-pairs
@@ -123,10 +96,7 @@
     `(progn
        ,@(loop for pair in normalized-pairs
                for (key expected) = pair
-               for message = (format nil "Expected ~A ~S to match"
-                                     expected-label key)
-               collect `(is (equal (,accessor ,invocation ,key) ,expected)
-                            ,message)))))
+               collect `(expect (equal (,accessor ,invocation ,key) ,expected))))))
 
 (defmacro invocation-values= (invocation &rest clauses)
   `(progn
@@ -134,15 +104,9 @@
              collect (destructuring-bind (kind key expected) clause
                        (ecase kind
                          (:option
-                          (let ((message (format nil "Expected option ~S to match"
-                                                 key)))
-                            `(is (equal (option-value ,invocation ,key) ,expected)
-                                 ,message)))
+                          `(expect (equal (option-value ,invocation ,key) ,expected)))
                          (:positional
-                          (let ((message (format nil "Expected positional ~S to match"
-                                                 key)))
-                            `(is (equal (positional-value ,invocation ,key) ,expected)
-                                 ,message))))))))
+                          `(expect (equal (positional-value ,invocation ,key) ,expected))))))))
 
 (defmacro option-values= (invocation &rest pairs)
   `(plist-values= ,invocation option-value "option" ,@pairs))
@@ -157,19 +121,11 @@
              collect (destructuring-bind (kind accessor &rest args) clause
                        (ecase kind
                          (:eq
-                          (let ((expected (first args))
-                                (message (second args)))
-                            `(is (eq (,accessor ,condition) ,expected)
-                                 ,(or message
-                                      `(format nil "Expected ~A to match"
-                                               ',accessor)))))
+                          (let ((expected (first args)))
+                            `(expect (eq (,accessor ,condition) ,expected))))
                          (:equal
-                          (let ((expected (first args))
-                                (message (second args)))
-                            `(is (equal (,accessor ,condition) ,expected)
-                                 ,(or message
-                                      `(format nil "Expected ~A to match"
-                                               ',accessor)))))
+                          (let ((expected (first args)))
+                            `(expect (equal (,accessor ,condition) ,expected))))
                          (:searches
                           `(assert-searches (,accessor ,condition)
                              ,@args))
@@ -214,17 +170,231 @@
        (let ((,app ,app-sym))
          ,@body))))
 
+(defun find-related-option-spec (specs target)
+  (or (and (symbolp target)
+           (find target specs :key #'option-key :test #'eq))
+      (and (stringp target)
+           (find-if (lambda (spec)
+                      (member target (option-names spec) :test #'string=))
+                    specs))))
+
+(defun assert-prolog-fact (rulebase fact)
+  (query-prolog rulebase (list 'assertz fact))
+  rulebase)
+
+(defun make-option-relations-rulebase (options)
+  (let ((rulebase (make-rulebase)))
+    (dolist (spec options)
+      (assert-prolog-fact rulebase `(option ,(option-key spec)))
+      (when (option-hidden-p spec)
+        (assert-prolog-fact rulebase `(hidden ,(option-key spec))))
+      (dolist (target (option-requires spec))
+        (let ((resolved (find-related-option-spec options target)))
+          (when resolved
+            (assert-prolog-fact rulebase
+                                `(requires ,(option-key spec)
+                                           ,(option-key resolved))))))
+      (dolist (target (option-conflicts-with spec))
+        (let ((resolved (find-related-option-spec options target)))
+          (when resolved
+            (assert-prolog-fact rulebase
+                                `(conflicts ,(option-key spec)
+                                            ,(option-key resolved)))))))
+    rulebase))
+
+(defparameter *prolog-atom-package* (find-package :cl-cli/tests)
+  "Fixed package for interning Prolog atoms.
+
+Predicate and atom identity in cl-prolog is symbol identity, so facts must be
+interned into the same package the query literals in the test files are read
+into (CL-CLI/TESTS). Interning into the volatile *PACKAGE* makes rulebases
+non-reproducible: under the CL-USER runtime the suite uses, derived predicates
+would land in the wrong package and the engine would raise EXISTENCE_ERROR.")
+
+(defun prolog-atom (value)
+  (etypecase value
+    (keyword (intern (symbol-name value) *prolog-atom-package*))
+    (symbol (intern (string-upcase (symbol-name value)) *prolog-atom-package*))
+    (string (intern (string-upcase value) *prolog-atom-package*))
+    (integer value)))
+
+(defun prolog-fact (&rest term)
+  (cl-prolog:make-clause term))
+
+(defun positional-key (positional)
+  (cl-cli::positional-spec-key positional))
+
+(defun positional-required-p (positional)
+  (cl-cli::positional-spec-required-p positional))
+
+(defun positional-rest-p (positional)
+  (cl-cli::positional-spec-rest-p positional))
+
+(defun option-atom (option)
+  (prolog-atom (option-key option)))
+
+(defun positional-atom (positional)
+  (prolog-atom (positional-key positional)))
+
+(defun option-clauses (scope-name app-name option &optional command-name)
+  (let ((option-name (option-atom option))
+        (kind (prolog-atom (option-kind option)))
+        (clauses '()))
+    (labels ((fact (&rest term)
+               (push (apply #'prolog-fact term) clauses)))
+      (if command-name
+          (fact scope-name app-name command-name option-name)
+          (fact scope-name app-name option-name))
+      (if command-name
+          (fact (prolog-atom (format nil "~A-KIND" scope-name))
+                app-name command-name option-name kind)
+          (fact (prolog-atom (format nil "~A-KIND" scope-name))
+                app-name option-name kind))
+      (when (option-required-p option)
+        (if command-name
+            (fact (prolog-atom (format nil "~A-REQUIRED" scope-name))
+                  app-name command-name option-name)
+            (fact (prolog-atom (format nil "~A-REQUIRED" scope-name))
+                  app-name option-name)))
+      (when (option-stop-parsing-p option)
+        (if command-name
+            (fact (prolog-atom (format nil "~A-STOP-PARSING" scope-name))
+                  app-name command-name option-name)
+            (fact (prolog-atom (format nil "~A-STOP-PARSING" scope-name))
+                  app-name option-name)))
+      (dolist (env-var (option-env-vars option))
+        (if command-name
+            (fact (prolog-atom (format nil "~A-ENV-VAR" scope-name))
+                  app-name command-name option-name (prolog-atom env-var))
+            (fact (prolog-atom (format nil "~A-ENV-VAR" scope-name))
+                  app-name option-name (prolog-atom env-var))))
+      (dolist (choice (option-choices option))
+        (if command-name
+            (fact (prolog-atom (format nil "~A-CHOICE" scope-name))
+                  app-name command-name option-name (prolog-atom choice))
+            (fact (prolog-atom (format nil "~A-CHOICE" scope-name))
+                  app-name option-name (prolog-atom choice))))
+      (dolist (dependency (option-requires option))
+        (if command-name
+            (fact (prolog-atom (format nil "~A-REQUIRES" scope-name))
+                  app-name command-name option-name (prolog-atom dependency))
+            (fact (prolog-atom (format nil "~A-REQUIRES" scope-name))
+                  app-name option-name (prolog-atom dependency)))))
+    (nreverse clauses)))
+
+(defun positional-clauses (scope-name app-name positional &optional command-name)
+  (let ((positional-name (positional-atom positional))
+        (clauses '()))
+    (labels ((fact (&rest term)
+               (push (apply #'prolog-fact term) clauses)))
+      (if command-name
+          (fact scope-name app-name command-name positional-name)
+          (fact scope-name app-name positional-name))
+      (when (positional-required-p positional)
+        (if command-name
+            (fact (prolog-atom (format nil "~A-REQUIRED" scope-name))
+                  app-name command-name positional-name)
+            (fact (prolog-atom (format nil "~A-REQUIRED" scope-name))
+                  app-name positional-name)))
+      (when (positional-rest-p positional)
+        (if command-name
+            (fact (prolog-atom (format nil "~A-REST" scope-name))
+                  app-name command-name positional-name)
+            (fact (prolog-atom (format nil "~A-REST" scope-name))
+                  app-name positional-name))))
+    (nreverse clauses)))
+
+(defun app->prolog-clauses (app)
+  (let ((app-name (prolog-atom (app-name app)))
+        (clauses '()))
+    (labels ((collect (new-clauses)
+               (setf clauses (nconc clauses new-clauses)))
+             (fact (&rest term)
+               (push (apply #'prolog-fact term) clauses)))
+      (fact 'app app-name)
+      (when (app-default-command app)
+        (fact 'default-command
+              app-name
+              (prolog-atom (app-default-command app))))
+      (dolist (option (app-global-options app))
+        (collect (option-clauses 'global-option app-name option)))
+      (dolist (positional (app-positionals app))
+        (collect (positional-clauses 'app-positional app-name positional)))
+      (dolist (command (app-commands app))
+        (let ((command-name (prolog-atom (command-name command))))
+          (fact 'command app-name command-name)
+          (dolist (alias (command-aliases command))
+            (fact 'command-alias app-name command-name (prolog-atom alias)))
+          (dolist (option (command-options command))
+            (collect (option-clauses 'command-option app-name option command-name)))
+          (dolist (positional (command-positionals command))
+            (collect (positional-clauses
+                      'command-positional
+                      app-name
+                      positional
+                      command-name))))))
+    clauses))
+
+(defparameter *consumer-migration-contract-predicates*
+  '((app 1)
+    (default-command 2)
+    (command 2)
+    (command-alias 3)
+    (global-option 2)
+    (global-option-kind 3)
+    (global-option-required 2)
+    (global-option-stop-parsing 2)
+    (global-option-env-var 3)
+    (global-option-choice 3)
+    (global-option-requires 3)
+    (app-positional 2)
+    (app-positional-required 2)
+    (app-positional-rest 2)
+    (command-option 3)
+    (command-option-kind 4)
+    (command-option-required 3)
+    (command-option-stop-parsing 3)
+    (command-option-env-var 4)
+    (command-option-choice 4)
+    (command-option-requires 4)
+    (command-positional 3)
+    (command-positional-required 3)
+    (command-positional-rest 3))
+  "The full (predicate . arity) vocabulary the consumer-migration contracts query.
+
+Kept as an explicit list so the contract surface is documented in one place and
+so absent facts fail cleanly instead of raising cl-prolog's existence_error.")
+
+(defun consumer-migration-schema-clauses ()
+  "Declare every contract predicate with a never-succeeding guard clause.
+
+cl-prolog raises the ISO existence_error(procedure, Name/Arity) for a query
+whose predicate has no clauses at all. A :fails contract such as
+\"nshell script stays optional\" (app-positional-required has zero facts when no
+positional is required) would therefore error instead of failing. Seeding a
+`Head :- fail.' guard per predicate makes each one known-but-empty, which
+mirrors how src/option-relations.lisp declares :requires/:conflicts. The guard
+adds no solutions, so :succeeds and :set contracts are unaffected."
+  (loop for (name arity) in *consumer-migration-contract-predicates*
+        collect (cl-prolog:make-clause
+                 (cons (prolog-atom (symbol-name name))
+                       (loop for index below arity
+                             collect (intern (format nil "?G~D" index)
+                                             *prolog-atom-package*)))
+                 (list (list 'cl-prolog:fail)))))
+
+(defun consumer-migration-rulebase ()
+  (cl-prolog:make-rulebase
+   :clauses
+   (append (consumer-migration-schema-clauses)
+           (mapcan #'app->prolog-clauses
+                   (list (cl-cli/examples:make-cl-cc-app)
+                         (cl-cli/examples:make-cl-tmux-app)
+                         (cl-cli/examples:make-private-trade-fx-app)
+                         (cl-cli/examples:make-nshell-app))))))
+
 (defun run-tests ()
-  "Run every registered test case and signal an error on any failure."
-  (let ((tests (reverse *tests*))
-        (failures 0))
-    (dolist (test tests)
-      (handler-case
-          (run-test-case (first test) (second test))
-        (error (condition)
-          (incf failures)
-          (format t "[FAIL] ~A~%  ~A~%" (first test) condition))))
-    (format t "~&~D test(s), ~D failure(s).~%" (length tests) failures)
-    (when (plusp failures)
-      (error "Test suite failed with ~D failure(s)." failures))
-    t))
+  "Run the registered cl-weave suites and signal an error on any failure."
+  (unless (run-all)
+    (error "Test suite failed."))
+  t)

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -49,6 +49,6 @@ jobs:
           authToken: ${{ env.CACHIX_AUTH_TOKEN }}
           extraPullNames: nix-community
 
-      - name: Build Nix checks
+      - name: Run Nix flake check
         timeout-minutes: 10
-        run: perl -e 'alarm 600; exec @ARGV' -- nix build .#checks.x86_64-linux.default --print-build-logs
+        run: perl -e 'alarm 600; exec @ARGV' -- nix flake check --print-build-logs

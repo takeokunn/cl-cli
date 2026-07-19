@@ -18,13 +18,14 @@
 
 (defmacro assert-completion-searches-for-shells ((app) &rest shell-needles)
   `(progn
-     ,@(loop for (shell &rest needles) in shell-needles
+     ,@(loop for (shell . needles) in shell-needles
              collect `(assert-completion-searches (,app ,shell)
                         ,@needles))))
 
 (defun make-completion-fixture (&key (app-name "demo")
                                       version
                                       global-options
+                                      commands
                                       (command-name "compile")
                                       command-aliases
                                       command-description
@@ -38,7 +39,8 @@
     (make-app :name app-name
               :version version
               :global-options global-options
-              :commands (list command))))
+              :commands (or commands
+                            (list command)))))
 
 (defun completion-visible-commands-and-options-fixture ()
   (make-completion-fixture

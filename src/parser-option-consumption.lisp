@@ -19,13 +19,15 @@
            (signal-option-does-not-take-value (format nil "--~A" name)))
          (multiple-value-bind (new-values new-action)
              (store-flag-option values spec action)
-           (values new-values (rest remaining) new-action nil)))
+           (values new-values (rest remaining) new-action
+                   (option-stop-parsing-p spec))))
         (:boolean
          (when attached
            (signal-option-does-not-take-value (format nil "--~A" name)))
          (multiple-value-bind (new-values new-action)
              (store-boolean-option-value values spec action negated-p)
-           (values new-values (rest remaining) new-action nil)))
+           (values new-values (rest remaining) new-action
+                   (option-stop-parsing-p spec))))
         ((:value :optional-value)
          (consume-value-option spec attached (rest remaining) values action
                                (format nil "--~A" name)))))))
@@ -69,10 +71,16 @@
                (case (option-kind spec)
                  (:flag
                   (multiple-value-setq (values action)
-                    (store-flag-option values spec action)))
+                    (store-flag-option values spec action))
+                  (when (option-stop-parsing-p spec)
+                    (return-from consume-short-cluster
+                      (values values tokens action t))))
                  (:boolean
                   (multiple-value-setq (values action)
-                    (store-boolean-option-value values spec action nil)))
+                    (store-boolean-option-value values spec action nil))
+                  (when (option-stop-parsing-p spec)
+                    (return-from consume-short-cluster
+                      (values values tokens action t))))
                  (:optional-value
                   (let* ((rest (subseq cluster (1+ index)))
                          (attached (and (> (length rest) 0) rest))

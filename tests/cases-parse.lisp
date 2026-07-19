@@ -1,274 +1,276 @@
 (in-package :cl-cli/tests)
 
-(deftest parse-simple-flag
-  (with-parsed-argv (inv (demo-app
+(describe-sequential "parse"
+  (it "parses a simple flag"
+    (with-parsed-argv (inv (demo-app
+                            :global-options (list (flag-option "verbose" :short #\v))
+                            :commands nil)
+                           '("demo" "--verbose"))
+      (expect (eq (invocation-action inv) :dispatch))
+      (expect (getf (invocation-global-options inv) :verbose))
+      (expect (null (invocation-positionals inv)))))
+
+  (it "parses command and positionals"
+    (let* ((option-specs (list (value-option "output" :short #\o)))
+           (positional-specs (list (make-positional :key :input :required-p t)))
+           (app (make-app :name "demo")))
+      (multiple-value-bind (option-values positional-values action)
+          (cl-cli::parse-mixed-arguments app
+                                         '("-o" "out.bin" "input.lisp")
+                                         option-specs
+                                         positional-specs)
+        (expect (eq action :dispatch))
+        (expect (equal (getf option-values :output) "out.bin"))
+        (expect (equal (getf positional-values :input) "input.lisp")))))
+
+  (it "allows command options after positionals"
+    (let* ((run-command (make-command
+                         :name "run"
+                         :options (list (value-option "lang")
+                                        (flag-option "stdlib"))
+                         :positionals (list (make-positional :key :script :required-p t))))
+           (app (make-app :name "cc"
+                          :commands (list run-command)))
+           (inv (parse-argv app '("cc" "run" "script.php" "--lang=php" "--stdlib"))))
+      (expect (string= (command-name (invocation-command inv)) "run"))
+      (invocation-values= inv
+        (:positional :script "script.php")
+        (:option :lang "php")
+        (:option :stdlib t))))
+
+  (it "allows global options after command and positionals"
+    (let* ((run-command (make-command
+                         :name "run"
+                         :positionals (list (make-positional :key :script :required-p t))))
+           (app (make-app :name "cc"
                           :global-options (list (flag-option "verbose" :short #\v))
-                          :commands nil)
-                         '("demo" "--verbose"))
-    (is (eq (invocation-action inv) :dispatch))
-    (is (getf (invocation-global-options inv) :verbose))
-    (is (null (invocation-positionals inv))))
-  t)
+                          :commands (list run-command)))
+           (inv (parse-argv app '("cc" "run" "tool.lisp" "--verbose"))))
+      (expect (string= (command-name (invocation-command inv)) "run"))
+      (invocation-values= inv
+        (:positional :script "tool.lisp")
+        (:option :verbose t))))
 
-(deftest parse-command-and-positionals
-  (let* ((option-specs (list (value-option "output" :short #\o)))
-         (positional-specs (list (make-positional :key :input :required-p t)))
-         (app (make-app :name "demo")))
-    (multiple-value-bind (option-values positional-values action)
-        (cl-cli::parse-mixed-arguments app
-                                       '("-o" "out.bin" "input.lisp")
-                                       option-specs
-                                       positional-specs)
-      (is (eq action :dispatch))
-      (is (equal (getf option-values :output) "out.bin"))
-      (is (equal (getf positional-values :input) "input.lisp"))))
-  t)
+  (it "parses help flag"
+    (with-parsed-argv (inv (demo-app :commands nil) '("demo" "--help"))
+      (expect (eq (invocation-action inv) :help))))
 
-(deftest command-options-can-follow-positionals
-  (let* ((run-command (make-command
-                       :name "run"
-                       :options (list (value-option "lang")
-                                      (flag-option "stdlib"))
-                       :positionals (list (make-positional :key :script :required-p t))))
-         (app (make-app :name "cc"
-                        :commands (list run-command)))
-         (inv (parse-argv app '("cc" "run" "script.php" "--lang=php" "--stdlib"))))
-    (is (string= (command-name (invocation-command inv)) "run"))
-    (invocation-values= inv
-      (:positional :script "script.php")
-      (:option :lang "php")
-      (:option :stdlib t)))
-  t)
+  (it "parses short version flag"
+    (with-parsed-argv (inv (demo-app :version "1.2.3") '("demo" "-V"))
+      (expect (eq (invocation-action inv) :version))))
 
-(deftest global-options-can-follow-command-and-positionals
-  (let* ((run-command (make-command
-                       :name "run"
-                       :positionals (list (make-positional :key :script :required-p t))))
-         (app (make-app :name "cc"
-                        :global-options (list (flag-option "verbose" :short #\v))
-                        :commands (list run-command)))
-         (inv (parse-argv app '("cc" "run" "tool.lisp" "--verbose"))))
-    (is (string= (command-name (invocation-command inv)) "run"))
-    (invocation-values= inv
-      (:positional :script "tool.lisp")
-      (:option :verbose t)))
-  t)
+  (it "requires app version for version flags"
+    (let ((app (demo-app)))
+      (signals cli-unknown-option
+        (parse-argv app '("demo" "-V")))
+      (signals cli-unknown-option
+        (parse-argv app '("demo" "--version")))))
 
-(deftest parse-help-flag
-  (with-parsed-argv (inv (demo-app :commands nil) '("demo" "--help"))
-    (is (eq (invocation-action inv) :help)))
-  t)
+  (it "errors on unknown options"
+    (let ((app (demo-app :commands nil)))
+      (signals cli-unknown-option
+        (parse-argv app '("demo" "--bogus")))))
 
-(deftest parse-short-version-flag
-  (with-parsed-argv (inv (demo-app :version "1.2.3") '("demo" "-V"))
-    (is (eq (invocation-action inv) :version)))
-  t)
+  (it "suggests nearest match for unknown options"
+    (let ((app (demo-app
+                :global-options
+                (list (flag-option "verbose"
+                                   :short #\v)))))
+      (caught-signal= (cli-unknown-option condition)
+          (parse-argv app '("demo" "--verbsoe"))
+        (:searches cli-error-message "Did you mean: --verbose?"))))
 
-(deftest parse-version-flag-requires-app-version
-  (let ((app (demo-app)))
-    (signals cli-unknown-option
-      (parse-argv app '("demo" "-V")))
-    (signals cli-unknown-option
-      (parse-argv app '("demo" "--version"))))
-  t)
+  (it "does not suggest hidden options"
+    (let ((app (demo-app
+                :global-options
+                (list (flag-option "verbose"
+                                   :short #\v)
+                      (flag-option "internal-debug"
+                                   :short #\i
+                                   :hidden-p t)))))
+      (catching-signal (cli-unknown-option condition)
+        (parse-argv app '("demo" "--internal-deubg"))
+        (assert-searches (cli-error-message condition)
+          "Unknown option: --internal-deubg")
+        (assert-not-searches (cli-error-message condition)
+          "--internal-debug"))
+      (catching-signal (cli-unknown-option condition)
+        (parse-argv app '("demo" "-x"))
+        (assert-searches (cli-error-message condition)
+          "Did you mean: -h?")
+        (assert-not-searches (cli-error-message condition)
+          "-i"))))
 
-(deftest unknown-option-errors
-  (let ((app (demo-app :commands nil)))
-    (signals cli-unknown-option
-      (parse-argv app '("demo" "--bogus"))))
-  t)
+  (it "errors on unexpected positionals"
+    (signals cli-unexpected-argument
+      (parse-argv (demo-app :commands nil) '("demo" "extra"))))
 
-(deftest unknown-option-suggests-nearest-match
-  (let* ((app (demo-app
-               :global-options
-               (list (flag-option "verbose"
-                                  :short #\v)))))
-    (caught-signal= (cli-unknown-option condition)
-        (parse-argv app '("demo" "--verbsoe"))
-      (:searches cli-error-message "Did you mean: --verbose?")))
-  t)
+  (it "errors on missing required options"
+    (let* ((command (make-command
+                     :name "run"
+                     :options (list (make-option :name "config"
+                                                 :kind :value
+                                                 :required-p t))))
+           (app (make-app :name "demo" :commands (list command))))
+      (signals cli-missing-option-value
+        (parse-argv app '("demo" "run")))))
 
-(deftest unknown-option-does-not-suggest-hidden-options
-  (let* ((app (demo-app
-               :global-options
-               (list (flag-option "verbose"
-                                  :short #\v)
-                     (flag-option "internal-debug"
-                                  :short #\i
-                                  :hidden-p t)))))
-    (catching-signal (cli-unknown-option condition)
-      (parse-argv app '("demo" "--internal-deubg"))
-      (assert-searches (cli-error-message condition)
-        "Unknown option: --internal-deubg")
-      (assert-not-searches (cli-error-message condition)
-        "--internal-debug"))
-    (catching-signal (cli-unknown-option condition)
-      (parse-argv app '("demo" "-x"))
-      (assert-searches (cli-error-message condition)
-        "Did you mean: -h?")
-      (assert-not-searches (cli-error-message condition)
-        "-i")))
-  t)
+  (it "uses contextual command help"
+    (let* ((command (make-command
+                     :name "compile"
+                     :options (list (make-option :name "config"
+                                                 :kind :value
+                                                 :required-p t))
+                     :positionals (list (make-positional :key :input :required-p t))))
+           (app (make-app :name "demo" :commands (list command))))
+      (with-parsed-argv (inv app '("demo" "compile" "--help"))
+        (expect (eq (invocation-action inv) :help))
+        (expect (string= (command-name (invocation-command inv)) "compile")))))
 
-(deftest unexpected-positional-errors
-  (signals cli-unexpected-argument
-    (parse-argv (demo-app :commands nil) '("demo" "extra")))
-  t)
+  (it "suggests nearest match for unknown commands"
+    (let* ((command (make-command :name "compile"
+                                  :aliases '("build")))
+           (app (make-app :name "demo" :commands (list command))))
+      (caught-signal= (cli-unknown-command condition)
+          (parse-argv app '("demo" "compiel"))
+        (:searches cli-error-message "Did you mean: compile?"))))
 
-(deftest required-option-errors
-  (let* ((command (make-command
-                   :name "run"
-                   :options (list (make-option :name "config"
-                                               :kind :value
-                                               :required-p t))))
-         (app (make-app :name "demo" :commands (list command))))
-    (signals cli-missing-option-value
-      (parse-argv app '("demo" "run"))))
-  t)
+  (it "does not suggest hidden commands"
+    (let* ((public-command (make-command :name "compile"))
+           (hidden-command (make-command :name "internal-rebuild"
+                                         :aliases '("irebuild")
+                                         :hidden-p t))
+           (app (make-app :name "demo"
+                          :commands (list public-command hidden-command))))
+      (catching-signal (cli-unknown-command condition)
+        (parse-argv app '("demo" "internal-rebiuld"))
+        (assert-searches (cli-error-message condition)
+          "Unknown command: internal-rebiuld")
+        (assert-not-searches (cli-error-message condition)
+          "internal-rebuild"
+          "irebuild"))))
 
-(deftest command-help-is-contextual
-  (let* ((command (make-command
-                   :name "compile"
-                   :options (list (make-option :name "config"
-                                               :kind :value
-                                               :required-p t))
-                   :positionals (list (make-positional :key :input :required-p t))))
-         (app (make-app :name "demo" :commands (list command))))
-    (with-parsed-argv (inv app '("demo" "compile" "--help"))
-      (is (eq (invocation-action inv) :help))
-      (is (string= (command-name (invocation-command inv)) "compile"))))
-  t)
+  (it "requires option name before boolean parser setup"
+    (signals-invalid-specification
+      (make-option :kind :boolean)))
 
-(deftest unknown-command-suggests-nearest-match
-  (let* ((command (make-command :name "compile"
-                                :aliases '("build")))
-         (app (make-app :name "demo" :commands (list command))))
-    (caught-signal= (cli-unknown-command condition)
-        (parse-argv app '("demo" "compiel"))
-      (:searches cli-error-message "Did you mean: compile?")))
-  t)
+  (it "requires positional key or name"
+    (signals-invalid-specification
+      (make-positional)))
 
-(deftest unknown-command-does-not-suggest-hidden-commands
-  (let* ((public-command (make-command :name "compile"))
-         (hidden-command (make-command :name "internal-rebuild"
-                                       :aliases '("irebuild")
-                                       :hidden-p t))
-         (app (make-app :name "demo"
-                        :commands (list public-command hidden-command))))
-    (catching-signal (cli-unknown-command condition)
-      (parse-argv app '("demo" "internal-rebiuld"))
-      (assert-searches (cli-error-message condition)
-        "Unknown command: internal-rebiuld")
-      (assert-not-searches (cli-error-message condition)
-        "internal-rebuild"
-        "irebuild")))
-  t)
+  (it "parses option aliases"
+    (with-parsed-argv (inv (make-app :name "demo"
+                                     :global-options
+                                     (list (make-option :name "verbose"
+                                                        :aliases '("chatty")
+                                                        :kind :flag)
+                                           (make-option :name "threads"
+                                                        :aliases '("parallel")
+                                                        :kind :boolean)))
+                           '("demo" "--chatty" "--no-parallel"))
+      (option-values= inv :verbose t :threads nil)))
 
-(deftest option-specification-requires-a-name-before-boolean-parser-setup
-  (signals-invalid-specification
-    (make-option :kind :boolean))
-  t)
+  (it "resolves command alias"
+    (let* ((command (make-command :name "compile"
+                                  :aliases '("build")
+                                  :description "Compile sources."))
+           (app (make-app :name "demo" :commands (list command))))
+      (with-parsed-argv (inv app '("demo" "build"))
+        (expect (string= (command-name (invocation-command inv)) "compile")))))
 
-(deftest positional-specification-requires-a-key-or-name
-  (signals-invalid-specification
-    (make-positional))
-  t)
+  (it "supports root positionals and rest"
+    (with-parsed-argv (inv (make-app
+                            :name "nshell"
+                            :positionals (list (make-positional :key :script :required-p nil)
+                                               (make-positional :key :script-args :rest-p t)))
+                          '("nshell" "build.ns" "a" "b"))
+      (invocation-values= inv
+        (:positional :script "build.ns")
+        (:positional :script-args '("a" "b")))))
 
-(deftest parse-option-aliases-work
-  (with-parsed-argv (inv (make-app :name "demo"
-                                   :global-options
-                                   (list (make-option :name "verbose"
-                                                      :aliases '("chatty")
-                                                      :kind :flag)
-                                         (make-option :name "threads"
-                                                      :aliases '("parallel")
-                                                      :kind :boolean)))
-                         '("demo" "--chatty" "--no-parallel"))
-    (option-values= inv :verbose t :threads nil))
-  t)
+  (it "dispatches root handler"
+    (let* ((seen nil)
+           (app (make-app :name "tmuxish"
+                          :handler (lambda (invocation)
+                                     (setf seen invocation)
+                                     7)))
+           (exit-code (run-app app :argv '("tmuxish"))))
+      (expect (= exit-code 7))
+      (expect (eq (invocation-app seen) app))))
 
-(deftest parse-command-alias-resolves-command
-  (let* ((command (make-command :name "compile"
-                                :aliases '("build")
-                                :description "Compile sources."))
-         (app (make-app :name "demo" :commands (list command))))
-    (with-parsed-argv (inv app '("demo" "build"))
-      (is (string= (command-name (invocation-command inv)) "compile"))))
-  t)
+  (it "extracts application argv after runtime marker"
+    (let ((argv '("sbcl" "--core" "cl-tmux.core"
+                  "--no-userinit" "attach" "-Lmain")))
+      (expect (equal (extract-application-argv
+                      :argv argv
+                      :runtime-markers '("--no-userinit" "--end-toplevel-options"))
+                     '("attach" "-Lmain")))))
 
-(deftest root-positionals-and-rest
-  (with-parsed-argv (inv (make-app
-                          :name "nshell"
-                          :positionals (list (make-positional :key :script :required-p nil)
-                                             (make-positional :key :script-args :rest-p t)))
-                         '("nshell" "build.ns" "a" "b"))
-    (invocation-values= inv
-      (:positional :script "build.ns")
-      (:positional :script-args '("a" "b"))))
-  t)
+  (it "extracts application argv after separator"
+    (let ((argv '("nix" "run" ".#simulator" "--" "--seeds" "10")))
+      (expect (equal (extract-application-argv :argv argv :separator "--")
+                     '("--seeds" "10")))))
 
-(deftest root-handler-dispatches
-  (let* ((seen nil)
-         (app (make-app :name "tmuxish"
-                        :handler (lambda (invocation)
-                                   (setf seen invocation)
-                                   7)))
-         (exit-code (run-app app :argv '("tmuxish"))))
-    (is (= exit-code 7))
-    (is (eq (invocation-app seen) app)))
-  t)
+  (it "combines runtime marker and separator for application argv extraction"
+    (let ((argv '("sbcl" "--script" "runner.lisp"
+                  "--end-toplevel-options" "nix" "run" ".#simulator"
+                  "--" "--instrument" "USD_JPY")))
+      (expect (equal (extract-application-argv
+                      :argv argv
+                      :runtime-markers '("--no-userinit" "--end-toplevel-options")
+                      :separator "--")
+                     '("--instrument" "USD_JPY")))))
 
-(deftest extract-application-argv-after-runtime-marker
-  (let ((argv '("sbcl" "--core" "cl-tmux.core"
-                "--no-userinit" "attach" "-Lmain")))
-    (is (equal (extract-application-argv
-                :argv argv
-                :runtime-markers '("--no-userinit" "--end-toplevel-options"))
-               '("attach" "-Lmain"))))
-  t)
+  (it "returns a fresh default runtime markers list"
+    (let ((left (default-runtime-markers))
+          (right (default-runtime-markers)))
+      (expect (equal left right))
+      (expect (not (eq left right)))))
 
-(deftest extract-application-argv-after-separator
-  (let ((argv '("nix" "run" ".#simulator" "--" "--seeds" "10")))
-    (is (equal (extract-application-argv :argv argv :separator "--")
-               '("--seeds" "10"))))
-  t)
+  (it "application-argv uses default runtime markers"
+    (let ((argv '("sbcl" "--core" "cl-tmux.core"
+                  "--no-userinit" "attach" "-Lmain")))
+      (expect (equal (application-argv :argv argv)
+                     '("attach" "-Lmain")))))
 
-(deftest extract-application-argv-combines-runtime-marker-and-separator
-  (let ((argv '("sbcl" "--script" "runner.lisp"
-                "--end-toplevel-options" "nix" "run" ".#simulator"
-                "--" "--instrument" "USD_JPY")))
-    (is (equal (extract-application-argv
-                :argv argv
-                :runtime-markers '("--no-userinit" "--end-toplevel-options")
-               :separator "--")
-               '("--instrument" "USD_JPY"))))
-  t)
+  (it "application-argv can also extract after separator"
+    (let ((argv '("sbcl" "--script" "runner.lisp"
+                  "--end-toplevel-options" "nix" "run" ".#simulator"
+                  "--" "--instrument" "USD_JPY")))
+      (expect (equal (application-argv :argv argv :separator "--")
+                     '("--instrument" "USD_JPY")))))
 
-(deftest default-runtime-markers-returns-a-fresh-list
-  (let ((left (default-runtime-markers))
-        (right (default-runtime-markers)))
-    (is (equal left right))
-    (is (not (eq left right))))
-  t)
+  (it "strip-argv-separators removes literal sentinels"
+    (expect (equal (strip-argv-separators '("build.lisp" "--" "--flag" "value"))
+                   '("build.lisp" "--flag" "value")))
+    (expect (equal (strip-argv-separators '("a" "::" "b") :separator "::")
+                   '("a" "b"))))
 
-(deftest application-argv-uses-default-runtime-markers
-  (let ((argv '("sbcl" "--core" "cl-tmux.core"
-                "--no-userinit" "attach" "-Lmain")))
-    (is (equal (application-argv :argv argv)
-               '("attach" "-Lmain"))))
-  t)
+  (it "treats a bare - as a positional rather than crashing"
+    (with-parsed-argv (inv (make-app :name "app"
+                                     :positionals (list (make-positional :key :files
+                                                                         :rest-p t)))
+                           '("app" "-" "b"))
+      (expect (equal (positional-value inv :files) '("-" "b")))))
 
-(deftest application-argv-can-also-extract-after-separator
-  (let ((argv '("sbcl" "--script" "runner.lisp"
-                "--end-toplevel-options" "nix" "run" ".#simulator"
-                "--" "--instrument" "USD_JPY")))
-    (is (equal (application-argv :argv argv :separator "--")
-               '("--instrument" "USD_JPY"))))
-  t)
+  (it "keeps tokens after -- out of command dispatch"
+    (with-parsed-argv (inv (make-app :name "myapp"
+                                     :positionals (list (make-positional :key :files
+                                                                         :rest-p t))
+                                     :commands (list (make-command :name "deploy")))
+                           '("myapp" "--" "deploy" "x"))
+      (expect (null (invocation-command inv)))
+      (expect (equal (positional-value inv :files) '("deploy" "x")))))
 
-(deftest strip-argv-separators-removes-literal-sentinels
-  (is (equal (strip-argv-separators '("build.lisp" "--" "--flag" "value"))
-             '("build.lisp" "--flag" "value")))
-  (is (equal (strip-argv-separators '("a" "::" "b") :separator "::")
-             '("a" "b")))
-  t)
+  (it "honors stop-parsing on flag options for long and short forms"
+    (let ((app (make-app :name "f"
+                         :global-options (list (make-option :name "exec" :short #\x
+                                                            :kind :flag
+                                                            :stop-parsing-p t))
+                         :positionals (list (make-positional :key :rest :rest-p t)))))
+      (with-parsed-argv (inv app '("f" "--exec" "--bar" "baz"))
+        (expect (option-value inv :exec))
+        (expect (equal (positional-value inv :rest) '("--bar" "baz"))))
+      (with-parsed-argv (inv app '("f" "-x" "--bar" "baz"))
+        (expect (option-value inv :exec))
+        (expect (equal (positional-value inv :rest) '("--bar" "baz")))))))

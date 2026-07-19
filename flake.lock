@@ -1,5 +1,29 @@
 {
   "nodes": {
+    "cl-prolog": {
+      "flake": false,
+      "locked": {
+        "path": "../cl-prolog",
+        "type": "path"
+      },
+      "original": {
+        "path": "../cl-prolog",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "cl-weave": {
+      "flake": false,
+      "locked": {
+        "path": "../cl-weave",
+        "type": "path"
+      },
+      "original": {
+        "path": "../cl-weave",
+        "type": "path"
+      },
+      "parent": []
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1783279667,
@@ -18,6 +42,8 @@
     },
     "root": {
       "inputs": {
+        "cl-prolog": "cl-prolog",
+        "cl-weave": "cl-weave",
         "nixpkgs": "nixpkgs"
       }
     }

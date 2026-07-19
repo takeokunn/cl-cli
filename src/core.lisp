@@ -58,6 +58,11 @@
 
 (defun short-option-token-p (token)
   (and (command-line-option-p token)
+       ;; A bare "-" is the stdin/stdout idiom, not an option. Guard the length
+       ;; before reading index 1 -- without this, (char "-" 1) raised an
+       ;; uncaught SB-INT:INVALID-ARRAY-INDEX-ERROR that callers catching
+       ;; CLI-USAGE-ERROR could not handle. Mirrors LONG-OPTION-TOKEN-P's guard.
+       (> (length token) 1)
        (or (= (length token) 2)
            (not (char= (char token 1) #\-)))))
 

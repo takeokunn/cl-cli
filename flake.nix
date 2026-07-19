@@ -1,17 +1,29 @@
 {
   description = "Dependency-light Common Lisp CLI toolkit";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    cl-weave = {
+      url = "path:../cl-weave";
+      flake = false;
+    };
+    cl-prolog = {
+      url = "path:../cl-prolog";
+      flake = false;
+    };
+  };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, cl-weave, cl-prolog }:
     let
-      systems = [
+      supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
       ];
-      forAllSystems = nixpkgs.lib.genAttrs systems;
+      checkSystems = [ "x86_64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      forCheckSystems = nixpkgs.lib.genAttrs checkSystems;
+      clWeaveSourceDir = cl-weave.outPath;
+      clPrologSourceDir = cl-prolog.outPath;
     in
     {
       devShells = forAllSystems (system:
@@ -24,10 +36,12 @@
               pkgs.sbcl
               pkgs.rlwrap
             ];
+            CL_WEAVE_SOURCE_DIR = clWeaveSourceDir;
+            CL_PROLOG_SOURCE_DIR = clPrologSourceDir;
           };
         });
 
-      checks = forAllSystems (system:
+      checks = forCheckSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
           makeLispCheck = implementation: package:
@@ -35,6 +49,8 @@
               {
                 nativeBuildInputs = [ package ];
                 src = self;
+                CL_WEAVE_SOURCE_DIR = clWeaveSourceDir;
+                CL_PROLOG_SOURCE_DIR = clPrologSourceDir;
               }
               ''
                 cp -R "$src" source
@@ -50,6 +66,8 @@
             {
               nativeBuildInputs = [ pkgs.sbcl ];
               src = self;
+              CL_WEAVE_SOURCE_DIR = clWeaveSourceDir;
+              CL_PROLOG_SOURCE_DIR = clPrologSourceDir;
             }
             ''
               cp -R "$src" source

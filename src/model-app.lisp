@@ -8,6 +8,7 @@
               (zerop (length resolved-name)))
       (signal-cli-error 'cli-invalid-specification
                         "An app needs a non-empty name."))
+    (validate-safe-identifier-names (list resolved-name) "App name")
     (%validate-app-spec
      (%make-app-spec :name resolved-name
                      :version (and version (princ-to-string version))

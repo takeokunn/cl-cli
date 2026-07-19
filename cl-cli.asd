@@ -18,7 +18,7 @@
   :source-control (:git +cl-cli-repository-url+)
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("uiop")
+  :depends-on ("uiop" "cl-prolog")
   :in-order-to ((asdf:test-op (asdf:test-op "cl-cli/tests")))
   :serial t
   :components ((:file "src/package")
@@ -26,6 +26,7 @@
                (:file "src/core")
                (:file "src/model-helpers")
                (:file "src/model")
+               (:file "src/option-relations")
                (:file "src/model-app")
                (:file "src/util")
                (:file "src/parser-lookup")
@@ -50,13 +51,14 @@
   :author "takeokunn"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("cl-cli")
+  :depends-on ("cl-cli" "cl-weave" "cl-prolog/weave")
   :serial t
   :components ((:file "tests/package")
                (:file "tests/test-fixtures")
                (:file "examples/consumer-migrations")
                (:file "tests/test-support")
                (:file "tests/cases-parse")
+               (:file "tests/cases-property-parse")
                (:file "tests/cases-options")
                (:file "tests/cases-validation-specification")
                (:file "tests/cases-validation-values")
@@ -66,6 +68,7 @@
                (:file "tests/cases-completion-bash")
                (:file "tests/cases-completion-zsh")
                (:file "tests/cases-completion-fish")
-               (:file "tests/cases-completion-commands"))
+               (:file "tests/cases-completion-commands")
+               (:file "tests/cases-consumer-migrations"))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :cl-cli/tests :run-tests)))
