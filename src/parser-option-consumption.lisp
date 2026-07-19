@@ -43,7 +43,7 @@
            (and (eq (option-kind spec) :optional-value)
                 (option-consume-optional-value-p spec)
                 tokens
-                (not (command-line-option-p (first tokens)))))
+                (not (option-like-token-p (first tokens)))))
          (raw (cond
                 (attached attached)
                 (consume-separated-optional-p (first tokens))
@@ -61,6 +61,21 @@
       (setf tokens (rest tokens)))
     (values values tokens action (option-stop-parsing-p spec))))
 
+(defun %prepend-short-cluster-remainder (cluster index tokens)
+  "Preserve unconsumed characters after a stop-parsing flag/boolean at INDEX.
+
+A stop-parsing flag/boolean has no value of its own to absorb the rest of the
+cluster the way :VALUE/:OPTIONAL-VALUE options do, so without this the
+remaining characters (e.g. \"b\" in \"-xb\" when \"-x\" stops parsing) were
+silently discarded instead of surfacing as literal input. Parsing already
+switches to literal mode once stop-parsing fires, so the exact spelling only
+affects the stored value, not control flow; the leading \"-\" is restored so
+the token reflects what was actually typed."
+  (let ((rest (subseq cluster (1+ index))))
+    (if (plusp (length rest))
+        (cons (format nil "-~A" rest) tokens)
+        tokens)))
+
 (defun consume-short-cluster (cluster tokens specs table values action)
   (loop for index from 0 below (length cluster)
         do (let* ((name (string (char cluster index)))
@@ -74,13 +89,17 @@
                     (store-flag-option values spec action))
                   (when (option-stop-parsing-p spec)
                     (return-from consume-short-cluster
-                      (values values tokens action t))))
+                      (values values
+                              (%prepend-short-cluster-remainder cluster index tokens)
+                              action t))))
                  (:boolean
                   (multiple-value-setq (values action)
                     (store-boolean-option-value values spec action nil))
                   (when (option-stop-parsing-p spec)
                     (return-from consume-short-cluster
-                      (values values tokens action t))))
+                      (values values
+                              (%prepend-short-cluster-remainder cluster index tokens)
+                              action t))))
                  (:optional-value
                   (let* ((rest (subseq cluster (1+ index)))
                          (attached (and (> (length rest) 0) rest))
@@ -88,7 +107,7 @@
                            (and (null attached)
                                 (option-consume-optional-value-p spec)
                                 tokens
-                                (not (command-line-option-p (first tokens)))))
+                                (not (option-like-token-p (first tokens)))))
                          (raw (cond
                                 (attached attached)
                                 (consume-separated-optional-p (first tokens))

@@ -14,17 +14,37 @@ minimal Common Lisp and Nix environments.
 
 ## Installation
 
-With Quicklisp / ASDF:
+`cl-cli` depends on [`cl-prolog`](https://github.com/takeokunn/cl-prolog), which
+is **not in Quicklisp**, so a bare `(ql:quickload :cl-cli)` will not resolve on
+its own. Choose one of the paths below.
+
+### With Nix (recommended)
+
+The flake wires up `cl-prolog` and `cl-weave` for you:
+
+```bash
+nix develop        # drop into a shell with all dependencies available
+nix flake check    # run the test suite across sbcl and ecl
+```
+
+### With ASDF / Quicklisp
+
+Clone `cl-cli` and its `cl-prolog` dependency where ASDF can find them (for
+example under `~/common-lisp/` or `~/quicklisp/local-projects/`), then load it.
+Once the dependency is registered, Quicklisp resolves the remaining `uiop`
+dependency automatically:
+
+```bash
+git clone https://github.com/takeokunn/cl-prolog  ~/common-lisp/cl-prolog
+git clone https://github.com/takeokunn/cl-cli     ~/common-lisp/cl-cli
+```
 
 ```lisp
 (ql:quickload :cl-cli)
 ```
 
-With Nix:
-
-```bash
-nix develop
-```
+Running the test suite additionally requires
+[`cl-weave`](https://github.com/takeokunn/cl-weave) checked out the same way.
 
 The repository includes Nix checks for both `sbcl` and `ecl`, so
 `nix flake check` verifies the current test suite across multiple Common Lisp
@@ -123,6 +143,10 @@ Help output is context-sensitive:
 - app, command, and option names are restricted to safe identifier characters
   (letters, digits, `-`, `_`, `.`), so author- or config-supplied names cannot
   inject shell syntax into generated completion scripts
+- a required positional may not follow an optional one, and two options may
+  not resolve to the same key (e.g. via case-differing single-character
+  names), since either would silently misassign or overwrite parsed values
+- an option may not reuse the reserved `:help`/`:version` key
 - unknown commands and options suggest the nearest known spelling when the typo is close enough
 - `--version` is only shown in help when the app has a version string
 
@@ -193,6 +217,20 @@ environment defaults, and literal defaults are resolved.
 When a relation target points at a hidden option, parsing still honors the
 relation but generated help omits that hidden target from public metadata, and
 runtime relationship errors avoid printing the hidden option name.
+
+`:requires` demands every listed target; when only one of several alternatives
+must be present (such as authenticating with a token *or* a username and
+password), declare `:requires-any-of` instead:
+
+```lisp
+(cl-cli:make-option :name "login"
+                    :kind :flag
+                    :requires-any-of '(:token :username))
+```
+
+Parsing signals `cli-missing-any-of-options` when none of the declared
+alternatives are supplied, and help lists them as `requires one of: --token,
+--username`.
 
 To make a set of options mutually exclusive (at most one may be supplied),
 splice them through `cl-cli:exclusive-group` instead of hand-writing every
@@ -334,7 +372,7 @@ Use these `cl-cli` features:
 
 Existing coverage:
 
-- script tail preservation and separator normalization are exercised in `stop-parsing-option-preserves-remaining-arguments`, `stop-parsing-short-attached-value`, and `stop-parsing-script-mode-can-normalize-opaque-tail` in [tests/run-tests.lisp](/Users/take/ghq/github.com/takeokunn/cl-cli/tests/run-tests.lisp)
+- script tail preservation and separator normalization are exercised in `stop-parsing-option-preserves-remaining-arguments`, `stop-parsing-short-attached-value`, and `stop-parsing-script-mode-can-normalize-opaque-tail` in [tests/run-tests.lisp](tests/run-tests.lisp)
 
 ### `cl-tmux`
 
@@ -356,7 +394,7 @@ Use these `cl-cli` features:
 Existing coverage:
 
 - attached short value parsing is shown in the `-S/tmp/tmux.sock` example above
-- root/default dispatch is exercised in `default-command-dispatches-without-command-token` in [tests/run-tests.lisp](/Users/take/ghq/github.com/takeokunn/cl-cli/tests/run-tests.lisp)
+- root/default dispatch is exercised in `default-command-dispatches-without-command-token` in [tests/run-tests.lisp](tests/run-tests.lisp)
 
 ### `private-trade-fx`
 
@@ -379,7 +417,7 @@ Use these `cl-cli` features:
 Existing coverage:
 
 - parser-hook validation is demonstrated in the positive-integer example below
-- separator-preserving and separator-normalizing flows are covered in [tests/run-tests.lisp](/Users/take/ghq/github.com/takeokunn/cl-cli/tests/run-tests.lisp)
+- separator-preserving and separator-normalizing flows are covered in [tests/run-tests.lisp](tests/run-tests.lisp)
 
 ### `nshell`
 
@@ -400,16 +438,16 @@ Use these `cl-cli` features:
 Existing coverage:
 
 - root positional parsing is shown in the `script-runner` example above
-- root/default dispatch behavior is covered in [tests/run-tests.lisp](/Users/take/ghq/github.com/takeokunn/cl-cli/tests/run-tests.lisp)
+- root/default dispatch behavior is covered in [tests/run-tests.lisp](tests/run-tests.lisp)
 
 ### Verification path
 
 For the four target CLIs above, the remaining migration work is consumer-side
 spec translation, not new parser primitives in `cl-cli`.
 
-- representative specs for all four migration targets live in [examples/consumer-migrations.lisp](/Users/take/ghq/github.com/takeokunn/cl-cli/examples/consumer-migrations.lisp)
+- representative specs for all four migration targets live in [examples/consumer-migrations.lisp](examples/consumer-migrations.lisp)
 - load the system with ASDF
-- run [tests/run-tests.lisp](/Users/take/ghq/github.com/takeokunn/cl-cli/tests/run-tests.lisp)
+- run [tests/run-tests.lisp](tests/run-tests.lisp)
 - if you launch through SBCL, Nix, or a wrapper script, normalize argv first with `application-argv`
 
 ## Validation and exit codes
@@ -458,6 +496,15 @@ Shell-specific renderers are also available:
 (cl-cli:render-fish-completion *app*)
 ```
 
+Like `format`, these renderers take an optional stream: called with no stream
+they return the script as a string, and called with a stream they write to it
+and return no values. Pass an explicit stream to avoid building an intermediate
+string:
+
+```lisp
+(cl-cli:render-completion *app* "bash" *standard-output*)
+```
+
 If you want standard built-in subcommands, use
 `cl-cli:make-standard-commands`. It returns `help` and `version` by default;
 when the app omits a version string, `version` prints just the app name.
@@ -500,6 +547,52 @@ Use `:default-command` when a subcommand app should dispatch a command even
 without an explicit command token. Use root `:positionals` plus a root
 `:handler` for script-style CLIs such as `SCRIPT [ARGS...]`.
 
+## Public API reference
+
+All public symbols live in the `cl-cli` package.
+
+**Spec constructors** — `make-app`, `make-command`, `make-option`,
+`make-positional`, `exclusive-group`, `required-exclusive-group`.
+
+**Built-in commands** — `make-standard-commands` (the aggregate), or the
+individual `make-help-command`, `make-version-command`, and
+`make-completion-command`.
+
+**Parsing and dispatch** — `parse-argv` returns an invocation object without
+running handlers; `run-app` parses and dispatches, returning a process exit
+code.
+
+**Help** — `print-app-help` and `print-command-help` render help text directly
+to a stream, independent of the built-in `help` command.
+
+**Shell completion** — `render-completion` (shell name as a string) plus the
+shell-specific `render-bash-completion`, `render-zsh-completion`, and
+`render-fish-completion`.
+
+**Runtime argv** — `current-process-argv`, `application-argv`,
+`extract-application-argv`, `default-runtime-markers`, and
+`strip-argv-separators` normalize launcher-inserted tokens and `--` separators.
+
+**Invocation accessors** — `option-value` and `positional-value` read resolved
+values; `invocation-app`, `invocation-command`, `invocation-action`,
+`invocation-argv0`, `invocation-raw-argv`, `invocation-global-options`,
+`invocation-command-options`, `invocation-positionals`, `invocation-stdout`,
+and `invocation-stderr` expose the rest of the parsed invocation.
+`command-by-name` resolves a command spec by name or alias.
+
+**Spec accessors** — every `make-app` / `make-command` / `make-option` /
+`make-positional` keyword has a matching reader in the `app-*`, `command-*`,
+and `option-*` families (for example `app-commands`, `command-options`,
+`option-required-p`).
+
+**Conditions** — usage errors subclass `cli-usage-error`; specification errors
+signal `cli-invalid-specification`. Concrete conditions include
+`cli-unknown-option`, `cli-unknown-command`, `cli-missing-option-value`,
+`cli-missing-dependent-option`, `cli-missing-any-of-options`,
+`cli-conflicting-options`, `cli-missing-positional`, `cli-invalid-option-value`,
+`cli-invalid-positional-value`, and `cli-unexpected-argument`, each with
+readers such as `cli-error-message` for structured handling.
+
 ## Test
 
 ```bash
@@ -511,27 +604,27 @@ nix flake check
 ## Contributing
 
 Development workflow, change expectations, and verification requirements are
-documented in [CONTRIBUTING.md](/Users/take/ghq/github.com/takeokunn/cl-cli/CONTRIBUTING.md).
+documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support
 
 Usage questions, bug-report expectations, and maintainer support boundaries are
-documented in [SUPPORT.md](/Users/take/ghq/github.com/takeokunn/cl-cli/SUPPORT.md).
+documented in [SUPPORT.md](SUPPORT.md).
 
 ## Changelog
 
 User-visible release notes are tracked in
-[CHANGELOG.md](/Users/take/ghq/github.com/takeokunn/cl-cli/CHANGELOG.md).
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Releasing
 
 The maintainer release checklist is documented in
-[RELEASING.md](/Users/take/ghq/github.com/takeokunn/cl-cli/RELEASING.md).
+[RELEASING.md](RELEASING.md).
 
 ## Security
 
 Private vulnerability handling expectations are documented in
-[SECURITY.md](/Users/take/ghq/github.com/takeokunn/cl-cli/SECURITY.md).
+[SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -32,6 +32,18 @@
       (with-app-help-text (text app)
         (assert-searches text "Config file. (requires: --profile; conflicts: --token)"))))
 
+  (it "includes requires-any-of metadata"
+    (let ((app (make-app
+                :name "demo"
+                :global-options
+                (list (make-option :name "token" :kind :value)
+                      (make-option :name "username" :kind :value)
+                      (make-option :name "login" :kind :flag
+                                  :description "Sign in."
+                                  :requires-any-of '(:token :username))))))
+      (with-app-help-text (text app)
+        (assert-searches text "Sign in. (requires one of: --token, --username)"))))
+
   (it "hides hidden option relationship targets"
     (let ((app (make-app
                 :name "demo"

@@ -72,4 +72,17 @@
   (it "hides hidden commands and options"
     (let ((app (completion-hidden-commands-and-options-fixture)))
       (assert-completion-searches (app) "visible" "--visible-flag")
-      (assert-completion-not-searches (app) "secret" "--secret-flag"))))
+      (assert-completion-not-searches (app) "secret" "--secret-flag")))
+
+  (it "matches command-scoped attached-value candidates against the command-prefixed current word"
+    ;; The value_source case labels for a command option are rendered as
+    ;; "command:--option=*", so the case statement selecting on them must
+    ;; switch on "command:$cur", not the bare "$cur" -- otherwise the labels
+    ;; can never match and attached-value completion silently never fires.
+    (let ((app (make-completion-fixture
+                :command-options (list (make-option :name "output"
+                                                    :short #\o
+                                                    :kind :value
+                                                    :choices '("bin" "obj"))))))
+      (assert-completion-searches (app)
+        "case \"compile:$cur\" in"))))

@@ -54,7 +54,7 @@
       (format out "  case \"${words[1]}\" in~%")
       (format out "    ~A)~%"
               (%completion-case-labels (%completion-command-names command)))
-      (format out "      case \"$cur\" in~%")
+      (format out "      case \"~A:$cur\" in~%" command-name)
       (write-string (%completion-bash-value-case-body options
                                                        :command-name command-name)
                     out)
@@ -75,9 +75,15 @@
       (format out "  esac~%"))))
 
 (defun render-bash-completion (app &optional stream)
-  "Render a bash completion script."
-  (let ((stream (or stream *standard-output*))
-        (function-name (%completion-function-name app))
+  "Render a bash completion script.
+
+With no STREAM, return the completion script as a string. With a STREAM,
+write the script to it and return no values."
+  (unless stream
+    (return-from render-bash-completion
+      (with-output-to-string (string-stream)
+        (render-bash-completion app string-stream))))
+  (let ((function-name (%completion-function-name app))
         (app-name (app-name app)))
       (format stream "#!/usr/bin/env bash~%")
       (format stream "# bash completion for ~A~%" app-name)

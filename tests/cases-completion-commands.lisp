@@ -72,4 +72,24 @@
 
   (it "render-completion rejects unsupported shells"
     (signals cli-invalid-positional-value
-      (render-completion (make-app :name "demo") "pwsh"))))
+      (render-completion (make-app :name "demo") "pwsh")))
+
+  (it "renderers return the script as a string when no stream is given"
+    (let ((app (make-app :name "demo"
+                         :global-options (list (make-option :name "verbose" :kind :flag))
+                         :commands (list (make-command :name "serve")))))
+      ;; With no stream, each renderer returns exactly what the stream form
+      ;; writes, so the documented `(write-string (render-completion ...))`
+      ;; pattern works instead of returning no values.
+      (dolist (shell '("bash" "zsh" "fish"))
+        (let ((returned (render-completion app shell))
+              (written (with-string-output (out) (render-completion app shell out))))
+          (expect (stringp returned))
+          (expect (plusp (length returned)))
+          (expect (string= returned written))))
+      (expect (string= (render-bash-completion app)
+                       (with-string-output (out) (render-bash-completion app out))))
+      (expect (string= (render-zsh-completion app)
+                       (with-string-output (out) (render-zsh-completion app out))))
+      (expect (string= (render-fish-completion app)
+                       (with-string-output (out) (render-fish-completion app out)))))))

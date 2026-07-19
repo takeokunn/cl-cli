@@ -30,7 +30,7 @@ includes:
 ## Security issues
 
 Do not use public issues for suspected vulnerabilities. Follow
-[SECURITY.md](/Users/take/ghq/github.com/takeokunn/cl-cli/SECURITY.md).
+[SECURITY.md](SECURITY.md).
 
 ## Maintenance expectations
 

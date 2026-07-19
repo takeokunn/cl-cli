@@ -38,7 +38,8 @@
         (scan)))))
 
 (defun parse-mixed-arguments (app tokens option-specs positional-specs
-                               &optional initial-option-values)
+                               &optional initial-option-values
+                               &key command)
   (multiple-value-bind (validated-specs table)
       (prepare-option-parser-state app option-specs)
     (let* ((option-values initial-option-values)
@@ -91,6 +92,10 @@
       (setf option-values (apply-option-defaults option-values validated-specs))
       (unless (member action '(:help :version))
         (validate-required-options option-values validated-specs)
-        (validate-option-relationships option-values validated-specs)
+        (validate-option-relationships
+         option-values validated-specs
+         (if command
+             (gethash command (app-command-relation-rulebases app))
+             (app-global-relation-rulebase app)))
         (validate-required-option-groups option-values validated-specs))
       (values option-values positional-values action))))

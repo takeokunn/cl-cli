@@ -20,6 +20,34 @@
       (signals-invalid-specification
         (make-app :name "demo" :global-options (list left right)))))
 
+  (it "rejects options whose keys collide despite distinct case-sensitive short names"
+    ;; OPTION-KEYWORD downcases its argument, so single-character names "-a"
+    ;; and "-A" (deliberately case-sensitive as CLI tokens) both resolve to
+    ;; the same :A key -- without this check the two specs would silently
+    ;; share one storage slot instead of being rejected as a spec error.
+    (let ((left (make-option :short #\a :kind :flag))
+          (right (make-option :short #\A :kind :flag)))
+      (signals-invalid-specification
+        (make-app :name "demo" :global-options (list left right)))))
+
+  (it "rejects a user option that reuses the reserved :help key"
+    ;; BUILT-IN-OPTION-P/BUILT-IN-OPTION-ACTION key off OPTION-KEY's value
+    ;; alone, so an ordinary option given :key :help would hijack dispatch
+    ;; into the help action regardless of its own :kind.
+    (signals-invalid-specification
+      (make-app :name "demo"
+                :global-options (list (make-option :key :help
+                                                   :name "output"
+                                                   :kind :value)))))
+
+  (it "rejects a user option that reuses the reserved :version key"
+    (signals-invalid-specification
+      (make-app :name "demo"
+                :version "1.0.0"
+                :global-options (list (make-option :key :version
+                                                   :name "output"
+                                                   :kind :value)))))
+
   (it "rejects duplicate command names"
     (let ((left (make-command :name "build"))
           (right (make-command :name "build")))
@@ -109,6 +137,23 @@
                                  :name "run"
                                  :positionals (list (make-positional :key :args :rest-p t)
                                                     (make-positional :key :target :required-p t)))))))
+
+  (it "rejects a required root positional following an optional one"
+    ;; Positionals are assigned tokens greedily in declared order with no
+    ;; backtracking, so a required positional after an optional one could
+    ;; never receive a value even when one was supplied.
+    (signals-invalid-specification
+      (make-app :name "demo"
+                :positionals (list (make-positional :key :first)
+                                   (make-positional :key :second :required-p t)))))
+
+  (it "rejects a required command positional following an optional one"
+    (signals-invalid-specification
+      (make-app :name "demo"
+                :commands (list (make-command
+                                 :name "run"
+                                 :positionals (list (make-positional :key :first)
+                                                    (make-positional :key :second :required-p t)))))))
 
   (it "rejects duplicate root positional keys"
     (signals-invalid-specification

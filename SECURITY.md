@@ -9,16 +9,19 @@ against the latest commit on the default branch.
 
 Do not open a public issue for a suspected security problem.
 
-Report it privately to the maintainers with:
+Report it privately through GitHub's private vulnerability reporting:
 
-- a description of the issue
-- impact and expected attack conditions
-- a minimal reproduction if available
-- any proposed mitigation or patch
+1. Go to <https://github.com/takeokunn/cl-cli/security/advisories/new>
+   (also reachable from the repository's **Security** tab → **Report a
+   vulnerability**).
+2. Include:
+   - a description of the issue
+   - impact and expected attack conditions
+   - a minimal reproduction if available
+   - any proposed mitigation or patch
 
-If you do not have a private contact path yet, establish one before publishing a
-release from this repository. Until then, treat the repository as not ready for
-private vulnerability intake.
+GitHub keeps the report private between you and the maintainers until an
+advisory is published.
 
 ## Response expectations
 

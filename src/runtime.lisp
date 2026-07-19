@@ -56,26 +56,24 @@ must not depend on the Lisp implementation currently running this library."
         (nthcdr (1+ marker-index) argv)
         argv)))
 
-(defun %after-separator (argv separator)
-  (let ((tail (member separator argv :test #'string=)))
-    (if tail
-        (rest tail)
-        argv)))
-
 (defun extract-application-argv (&key (argv (current-process-argv))
                                    runtime-markers
                                    separator)
   "Extract application argv from launcher/runtime ARGV.
 
-If RUNTIME-MARKERS is non-NIL, drop everything through the last matching
-marker. If SEPARATOR is non-NIL and present afterwards, return only the tokens
-following the first matching separator."
-  (let ((remaining (copy-list argv)))
-    (when runtime-markers
-      (setf remaining (%drop-through-last-marker remaining runtime-markers)))
-    (if separator
-        (%after-separator remaining separator)
-        remaining)))
+If SEPARATOR is present in ARGV, everything after its first occurrence is the
+application argv, full stop -- RUNTIME-MARKERS is not applied to it. A literal
+application argument that happens to match a runtime marker (e.g. an app that
+itself accepts \"--end-toplevel-options\") must never be reinterpreted as a
+launcher token just because some earlier, unrelated launcher also uses that
+marker. Only when SEPARATOR is absent (or not given) does RUNTIME-MARKERS
+apply, dropping everything through the last matching marker."
+  (let* ((remaining (copy-list argv))
+         (tail (and separator (member separator remaining :test #'string=))))
+    (cond
+      (tail (rest tail))
+      (runtime-markers (%drop-through-last-marker remaining runtime-markers))
+      (t remaining))))
 
 (defun application-argv (&key (argv (current-process-argv))
                            (runtime-markers (default-runtime-markers))
