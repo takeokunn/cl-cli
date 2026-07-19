@@ -66,6 +66,17 @@
        (or (= (length token) 2)
            (not (char= (char token 1) #\-)))))
 
+(defun option-like-token-p (token)
+  "True when TOKEN would itself be parsed as a long or short option.
+
+Unlike COMMAND-LINE-OPTION-P (which only checks for a leading \"-\"), this
+excludes a bare \"-\": that token is the stdin/stdout idiom and is never
+itself parsed as an option (see SHORT-OPTION-TOKEN-P), so a following
+optional-value option must be able to consume it as a value instead of
+treating it as \"looks like another option, stop here\"."
+  (or (long-option-token-p token)
+      (short-option-token-p token)))
+
 (defun stable-sort-copy (sequence predicate &key key)
   (sort (copy-seq sequence) predicate :key key))
 

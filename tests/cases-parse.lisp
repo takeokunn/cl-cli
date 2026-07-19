@@ -221,6 +221,18 @@
                       :separator "--")
                      '("--instrument" "USD_JPY")))))
 
+  (it "does not reinterpret a marker-shaped application argument after the separator"
+    ;; Everything after the first separator is opaque application argv --
+    ;; a literal token there that happens to match a runtime marker must not
+    ;; be treated as a launcher token and dropped along with what precedes it.
+    (let ((argv '("sbcl" "--script" "foo.lisp"
+                  "--" "--end-toplevel-options" "positional-arg")))
+      (expect (equal (extract-application-argv
+                      :argv argv
+                      :runtime-markers '("--end-toplevel-options")
+                      :separator "--")
+                     '("--end-toplevel-options" "positional-arg")))))
+
   (it "returns a fresh default runtime markers list"
     (let ((left (default-runtime-markers))
           (right (default-runtime-markers)))
@@ -273,4 +285,31 @@
         (expect (equal (positional-value inv :rest) '("--bar" "baz"))))
       (with-parsed-argv (inv app '("f" "-x" "--bar" "baz"))
         (expect (option-value inv :exec))
-        (expect (equal (positional-value inv :rest) '("--bar" "baz")))))))
+        (expect (equal (positional-value inv :rest) '("--bar" "baz"))))))
+
+  (it "preserves unconsumed short-cluster characters after a mid-cluster stop-parsing flag"
+    ;; A stop-parsing flag/boolean has no value of its own to absorb the rest
+    ;; of the cluster, unlike :VALUE/:OPTIONAL-VALUE options -- the remainder
+    ;; must resurface as literal input instead of being silently dropped.
+    (let ((app (make-app :name "f"
+                         :global-options (list (make-option :name "exec" :short #\x
+                                                            :kind :flag
+                                                            :stop-parsing-p t)
+                                               (make-option :name "bar" :short #\b
+                                                            :kind :flag))
+                         :positionals (list (make-positional :key :rest :rest-p t)))))
+      (with-parsed-argv (inv app '("f" "-xb" "baz"))
+        (expect (option-value inv :exec))
+        (expect (null (option-value inv :bar)))
+        (expect (equal (positional-value inv :rest) '("-b" "baz"))))))
+
+  (it "consumes a bare - as a separated optional value"
+    ;; A bare "-" is the stdin/stdout idiom, not an option token -- an
+    ;; optional-value option configured to consume a separated value must be
+    ;; able to take it, the same way it takes any other non-option token.
+    (let ((app (make-app :name "f"
+                         :global-options (list (optional-value-option
+                                                "output"
+                                                :consume-optional-value-p t)))))
+      (with-parsed-argv (inv app '("f" "--output" "-"))
+        (expect (equal (option-value inv :output) "-"))))))

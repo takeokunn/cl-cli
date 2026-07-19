@@ -70,6 +70,7 @@
    :option-parser
    :option-required-p
    :option-requires
+   :option-requires-any-of
    :option-conflicts-with
    :option-multiple-p
    :option-consume-optional-value-p
@@ -80,6 +81,7 @@
    :cli-unknown-command
    :cli-missing-option-value
    :cli-missing-dependent-option
+   :cli-missing-any-of-options
    :cli-conflicting-options
    :cli-missing-positional
    :cli-invalid-option-value
@@ -94,6 +96,8 @@
    :cli-missing-option-value-name
    :cli-missing-dependent-option-name
    :cli-missing-dependent-option-dependency
+   :cli-missing-any-of-options-name
+   :cli-missing-any-of-options-alternatives
    :cli-conflicting-options-left-option
    :cli-conflicting-options-right-option
    :cli-missing-positional-name

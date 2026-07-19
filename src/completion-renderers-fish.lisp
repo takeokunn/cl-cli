@@ -1,9 +1,15 @@
 (in-package :cl-cli)
 
 (defun render-fish-completion (app &optional stream)
-  "Render a fish completion script."
-  (let ((stream (or stream *standard-output*))
-        (app-name (app-name app)))
+  "Render a fish completion script.
+
+With no STREAM, return the completion script as a string. With a STREAM,
+write the script to it and return no values."
+  (unless stream
+    (return-from render-fish-completion
+      (with-output-to-string (string-stream)
+        (render-fish-completion app string-stream))))
+  (let ((app-name (app-name app)))
     (format stream "complete -c ~A -f~%" (%completion-shell-quote app-name))
     (dolist (command (%completion-visible-commands app))
       (format stream "complete -c ~A -n ~A -a ~A -d ~A~%"

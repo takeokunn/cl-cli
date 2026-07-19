@@ -60,7 +60,8 @@
                                 (append (app-global-options app)
                                         (command-options command))
                                 (command-positionals command)
-                                global-values)
+                                global-values
+                                :command command)
       (let ((resolved-global-options
               (merge-global-options app combined-option-values global-values))
             (resolved-command-options

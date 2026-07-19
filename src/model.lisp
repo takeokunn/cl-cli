@@ -16,6 +16,7 @@
   parser
   required-p
   requires
+  requires-any-of
   conflicts-with
   multiple-p
   default-present-p
@@ -61,7 +62,17 @@
   default-command
   handler
   examples
-  help-footer)
+  help-footer
+  global-relation-rulebase
+  ;; A COMMAND-SPEC is an explicitly reusable, composable object (README:
+  ;; "reusable app, command, option, and positional specs") -- the same
+  ;; instance can be spliced into :COMMANDS for more than one MAKE-APP call.
+  ;; Caching a command's relation rulebase ON the shared command struct would
+  ;; let a later MAKE-APP call silently overwrite the rulebase an earlier,
+  ;; already-in-use app depends on. Keyed by command object (EQ) instead, this
+  ;; table lives on the APP -- which is never itself shared as another app's
+  ;; input -- so each app owns an independent cache even when commands are.
+  (command-relation-rulebases (make-hash-table :test 'eq)))
 
 (defstruct (invocation
             (:constructor %make-invocation)
@@ -110,12 +121,15 @@
 (defun validate-option-relationships-declared (specs)
   (dolist (spec specs)
     (%validate-related-option-targets specs spec "requires" (option-requires spec))
+    (%validate-related-option-targets specs spec "requires-any-of"
+                                      (option-requires-any-of spec))
     (%validate-related-option-targets specs spec "conflicts-with"
                                       (option-conflicts-with spec)))
   (validate-option-relation-graph specs))
 
 (defun make-option (&key key name short aliases kind description value-name (default nil default-supplied-p)
                       env-var env-vars choices completion-candidates parser required-p requires
+                      requires-any-of
                       conflicts-with multiple-p
                       consume-optional-value-p stop-parsing-p hidden-p)
   "Create a parsed option specification.
@@ -123,62 +137,68 @@
 NAME is the long option name without leading dashes. SHORT may be a single
 character or short-name string. ALIASES is a list of additional option names."
   (let* ((names (normalize-option-names name short aliases))
-         (names-present-p (not (null names)))
-         (resolved-key (or key
-                           (option-keyword (or name (first names)))))
-         (resolved-kind (or kind (if multiple-p :value :flag)))
-         (resolved-value-name (and value-name (princ-to-string value-name)))
-         (resolved-negated-names
-           (normalize-negated-option-names resolved-kind names))
-         (resolved-env-vars (normalize-env-vars env-var env-vars))
-         (resolved-choices (normalize-option-choices choices))
-         (resolved-completion-candidates
-           (normalize-option-completion-candidates completion-candidates))
-         (resolved-requires (normalize-option-relations requires))
-         (resolved-conflicts-with (normalize-option-relations conflicts-with))
-         (resolved-parser (or parser
-                              (ecase resolved-kind
-                                (:flag (lambda (value)
-                                         (declare (ignore value))
-                                         t))
-                                (:boolean (let ((display-name
-                                                  (if (= (length (first names)) 1)
-                                                      (format nil "-~A" (first names))
-                                                      (format nil "--~A" (first names)))))
-                                            (lambda (value)
-                                              (parse-boolean-designator value
-                                                                        display-name
-                                                                        resolved-key))))
-                                (:value #'identity)
-                                (:optional-value #'identity))))
-         (default-present-p default-supplied-p))
+         (names-present-p (not (null names))))
     (unless names-present-p
       (signal-cli-error 'cli-invalid-specification
                         "An option needs at least one name."))
     (validate-non-empty-strings names "Option names")
+    ;; Validate before OPTION-KEYWORD interns a symbol below: a spec that's
+    ;; about to be rejected must not leak a permanent :KEYWORD-package symbol
+    ;; for every rejected name an embedder tries (e.g. building specs from
+    ;; untrusted plugin/config data and catching CLI-INVALID-SPECIFICATION).
     (validate-safe-identifier-names names "Option names")
-    (when resolved-value-name
-      (validate-non-empty-strings (list resolved-value-name) "Option value names"))
-    (validate-option-multiplicity resolved-kind multiple-p)
-    (%make-option-spec :key resolved-key
-                       :names names
-                       :negated-names resolved-negated-names
-                       :kind resolved-kind
-                       :description (normalize-positional-description description)
-                       :value-name resolved-value-name
-                       :default default
-                       :env-vars resolved-env-vars
-                       :choices resolved-choices
-                       :completion-candidates resolved-completion-candidates
-                       :parser resolved-parser
-                       :required-p required-p
-                       :requires resolved-requires
-                       :conflicts-with resolved-conflicts-with
-                       :multiple-p multiple-p
-                       :default-present-p default-present-p
-                       :consume-optional-value-p consume-optional-value-p
-                       :stop-parsing-p stop-parsing-p
-                       :hidden-p hidden-p)))
+    (let* ((resolved-key (or key
+                             (option-keyword (or name (first names)))))
+           (resolved-kind (or kind (if multiple-p :value :flag)))
+           (resolved-value-name (and value-name (princ-to-string value-name)))
+           (resolved-negated-names
+             (normalize-negated-option-names resolved-kind names))
+           (resolved-env-vars (normalize-env-vars env-var env-vars))
+           (resolved-choices (normalize-option-choices choices))
+           (resolved-completion-candidates
+             (normalize-option-completion-candidates completion-candidates))
+           (resolved-requires (normalize-option-relations requires))
+           (resolved-requires-any-of (normalize-option-relations requires-any-of))
+           (resolved-conflicts-with (normalize-option-relations conflicts-with))
+           (resolved-parser (or parser
+                                (ecase resolved-kind
+                                  (:flag (lambda (value)
+                                           (declare (ignore value))
+                                           t))
+                                  (:boolean (let ((display-name
+                                                    (if (= (length (first names)) 1)
+                                                        (format nil "-~A" (first names))
+                                                        (format nil "--~A" (first names)))))
+                                              (lambda (value)
+                                                (parse-boolean-designator value
+                                                                          display-name
+                                                                          resolved-key))))
+                                  (:value #'identity)
+                                  (:optional-value #'identity))))
+           (default-present-p default-supplied-p))
+      (when resolved-value-name
+        (validate-non-empty-strings (list resolved-value-name) "Option value names"))
+      (validate-option-multiplicity resolved-kind multiple-p)
+      (%make-option-spec :key resolved-key
+                         :names names
+                         :negated-names resolved-negated-names
+                         :kind resolved-kind
+                         :description (normalize-positional-description description)
+                         :value-name resolved-value-name
+                         :default default
+                         :env-vars resolved-env-vars
+                         :choices resolved-choices
+                         :completion-candidates resolved-completion-candidates
+                         :parser resolved-parser
+                         :required-p required-p
+                         :requires resolved-requires
+                         :requires-any-of resolved-requires-any-of
+                         :conflicts-with resolved-conflicts-with
+                         :multiple-p multiple-p
+                         :default-present-p default-present-p
+                         :consume-optional-value-p consume-optional-value-p
+                         :stop-parsing-p stop-parsing-p
+                         :hidden-p hidden-p))))
 
 (defstruct (option-group (:constructor %make-option-group))
   "A set of options that participate together in an exclusive-choice relationship."
@@ -232,6 +252,12 @@ supplied, so callers must choose precisely one."
              (zerop (length (ensure-string name))))
     (signal-cli-error 'cli-invalid-specification
                       "A positional name must be non-empty."))
+  ;; Validate before OPTION-KEYWORD interns a symbol below: see the matching
+  ;; comment in MAKE-OPTION. Only applies when NAME derives the key -- an
+  ;; explicit KEY is already a keyword the caller chose directly in code, not
+  ;; a string, so there is nothing to validate or intern here.
+  (when (and (null key) name)
+    (validate-safe-identifier-names (list (ensure-string name)) "Positional name"))
   (let ((resolved-key (or key
                           (option-keyword name)))
         (spec (%make-positional-spec)))
@@ -271,6 +297,39 @@ supplied, so callers must choose precisely one."
           (loop for name in (option-negated-names spec)
                 collect (list name t))))
 
+(defun %validate-user-option-keys (specs owner-name)
+  "Reject a user-declared option whose resolved key is :HELP or :VERSION.
+
+BUILT-IN-OPTION-P and BUILT-IN-OPTION-ACTION (src/model-helpers.lisp,
+src/parser-values.lisp) key off OPTION-KEY's value alone, not object identity
+with the real built-in spec -- an ordinary option given :KEY :HELP or
+:KEY :VERSION would silently force the :HELP/:VERSION dispatch action
+whenever it is parsed, regardless of its own :KIND."
+  (dolist (spec specs)
+    (when (member (option-key spec) '(:help :version))
+      (signal-cli-error 'cli-invalid-specification
+                        (format nil "Option ~A for ~A cannot use the reserved key ~S."
+                                (%option-display-name spec)
+                                owner-name
+                                (option-key spec))))))
+
+(defun %validate-option-key-uniqueness (specs owner-name)
+  "Reject two options in SPECS that resolve to the same OPTION-KEY.
+
+Distinct declared names can still collide on key -- OPTION-KEYWORD downcases
+its argument, so single-character names \"-a\" and \"-A\" (deliberately
+case-sensitive as CLI tokens; see CANONICAL-OPTION-NAME) both resolve to
+:A. A key collision means the two specs share one storage slot in the parsed
+values plist, silently overwriting each other, and only the last spec with
+that key survives :requires/:conflicts-with resolution."
+  (let ((table (make-hash-table :test 'eq)))
+    (dolist (spec specs)
+      (%register-table-entry table
+                             (option-key spec)
+                             t
+                             (format nil "option key for ~A" owner-name)
+                             (format nil "~S" (option-key spec))))))
+
 (defun %validate-option-table (specs)
   (let ((table (make-hash-table :test 'equal)))
     (dolist (spec specs specs)
@@ -301,7 +360,8 @@ supplied, so callers must choose precisely one."
 
 (defun %validate-positional-sequence (positionals owner-name)
   (let ((seen-keys (make-hash-table :test 'eq))
-        (rest-seen-p nil))
+        (rest-seen-p nil)
+        (optional-seen-p nil))
     (dolist (spec positionals positionals)
       (let ((key (positional-spec-key spec)))
         (when (gethash key seen-keys)
@@ -314,6 +374,17 @@ supplied, so callers must choose precisely one."
         (signal-cli-error 'cli-invalid-specification
                           (format nil "Rest positional for ~A must be last."
                                   owner-name)))
+      ;; Tokens are assigned to positionals greedily in declared order with no
+      ;; backtracking (APPLY-POSITIONAL-SPEC), so a required positional after
+      ;; an optional one can never receive a value: the optional one consumes
+      ;; it first, then the required one fails as "missing" even though a
+      ;; value was supplied.
+      (if (positional-spec-required-p spec)
+          (when optional-seen-p
+            (signal-cli-error 'cli-invalid-specification
+                              (format nil "Required positional for ~A must not follow an optional positional."
+                                      owner-name)))
+          (setf optional-seen-p t))
       (when (positional-spec-rest-p spec)
         (setf rest-seen-p t)))))
 
@@ -323,16 +394,27 @@ supplied, so callers must choose precisely one."
          (command-table (%validate-command-table (app-commands app))))
     (%validate-positional-sequence (app-positionals app)
                                    (app-name app))
-    (validate-option-relationships-declared global-specs)
+    (%validate-user-option-keys (app-global-options app) (app-name app))
+    (multiple-value-bind (validated-global-specs global-rulebase)
+        (validate-option-relationships-declared global-specs)
+      (declare (ignore validated-global-specs))
+      (setf (app-global-relation-rulebase app) global-rulebase))
     (%validate-option-table global-specs)
+    (%validate-option-key-uniqueness global-specs (app-name app))
     (dolist (command (app-commands app))
       (%validate-positional-sequence (command-positionals command)
                                      (command-name command))
+      (%validate-user-option-keys (command-options command) (command-name command))
       (let ((command-specs (append built-ins
                                    (app-global-options app)
                                    (command-options command))))
-        (validate-option-relationships-declared command-specs)
-        (%validate-option-table command-specs)))
+        (multiple-value-bind (validated-command-specs command-rulebase)
+            (validate-option-relationships-declared command-specs)
+          (declare (ignore validated-command-specs))
+          (setf (gethash command (app-command-relation-rulebases app))
+                command-rulebase))
+        (%validate-option-table command-specs)
+        (%validate-option-key-uniqueness command-specs (command-name command))))
     (when (and (app-default-command app)
                (null (gethash (app-default-command app) command-table)))
       (signal-cli-error 'cli-invalid-specification

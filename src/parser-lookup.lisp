@@ -1,16 +1,22 @@
 (in-package :cl-cli)
 
-(defun validate-option-relationships (values specs)
+(defun validate-option-relationships (values specs &optional rulebase)
   ;; Most CLIs declare no requires/conflicts at all. Skip building a rulebase
   ;; and running any Prolog proof search when there is nothing to validate --
   ;; otherwise every parse pays for a rulebase plus O(present log present) empty
   ;; queries that can only ever succeed vacuously.
   (unless (some (lambda (spec)
                   (or (option-requires spec)
+                      (option-requires-any-of spec)
                       (option-conflicts-with spec)))
                 specs)
     (return-from validate-option-relationships values))
-  (let* ((rulebase (make-option-relation-rulebase specs))
+  ;; SPECS' :requires/:conflicts graph is fixed at spec-construction time, so
+  ;; %VALIDATE-APP-SPEC already built and validated this exact rulebase once
+  ;; and cached it on the app/command spec. Callers pass it in via RULEBASE;
+  ;; only rebuild here as a fallback for callers validating an ad hoc SPECS
+  ;; list that was never run through MAKE-APP.
+  (let* ((rulebase (or rulebase (make-option-relation-rulebase specs)))
          (present-specs
            (remove-if-not (lambda (spec)
                             (plist-has-key-p values (option-key spec)))
@@ -59,6 +65,22 @@
                                           (public-option-display-name dependency)))
                               :option (option-key spec)
                               :dependency (option-key dependency)))))
+      (when (option-requires-any-of spec)
+        (let* ((alternative-keys (any-of-required-option-keys rulebase (option-key spec)))
+               (alternatives (mapcar (lambda (key) (gethash key spec-by-key))
+                                     alternative-keys)))
+          (unless (some (lambda (alternative)
+                          (plist-has-key-p values (option-key alternative)))
+                        alternatives)
+            (signal-cli-error 'cli-missing-any-of-options
+                              (if (option-hidden-p spec)
+                                  (format nil "A hidden option requires one of: ~{~A~^, ~}."
+                                          (mapcar #'public-option-display-name alternatives))
+                                  (format nil "Option ~A requires one of: ~{~A~^, ~}."
+                                          (public-option-display-name spec)
+                                          (mapcar #'public-option-display-name alternatives)))
+                              :option (option-key spec)
+                              :alternatives (mapcar #'option-key alternatives)))))
       (dolist (target (option-conflicts-with spec))
         (let ((other (resolve-related-option-spec specs target)))
           (when (plist-has-key-p values (option-key other))

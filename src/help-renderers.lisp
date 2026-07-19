@@ -69,6 +69,14 @@
                       (mapcar #'option-relation-target-display-name
                               visible-requires))
               parts)))
+    (let ((visible-requires-any-of (%public-relation-targets
+                                     option options
+                                     (option-requires-any-of option))))
+      (when visible-requires-any-of
+        (push (format nil "requires one of: ~{~A~^, ~}"
+                      (mapcar #'option-relation-target-display-name
+                              visible-requires-any-of))
+              parts)))
     ;; Conflicts among members of this option's own group are already conveyed by
     ;; the "one of" line above; only surface conflicts with options outside it.
     (let ((visible-conflicts
