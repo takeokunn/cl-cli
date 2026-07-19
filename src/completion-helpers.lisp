@@ -3,6 +3,23 @@
 (defun %completion-visible-commands (app)
   (remove-if #'command-hidden-p (app-commands app)))
 
+(defun %completion-function-name (app)
+  ;; The result is emitted as a raw shell function name (e.g. `_demo_completion()`
+  ;; and `complete -F ...`), which cannot be quoted. App names are already
+  ;; validated to a safe identifier set, but map every non-word character to `_`
+  ;; anyway so this never produces a name that could break the function header.
+  (format nil "_~A_completion"
+          (map 'string
+               (lambda (char)
+                 (if (or (alphanumericp char) (char= char #\_))
+                     char
+                     #\_))
+               (app-name app))))
+
+(defun %completion-fish-command-condition (command)
+  (format nil "__fish_seen_subcommand_from ~{~A~^ ~}"
+          (%completion-command-names command)))
+
 (defun %completion-option-items-for-specs (options names-fn item-fn)
   (loop for option in options append
         (loop for name in (funcall names-fn option)

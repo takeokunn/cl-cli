@@ -5,6 +5,8 @@
    :make-command
    :make-option
    :make-positional
+   :exclusive-group
+   :required-exclusive-group
    :make-help-command
    :make-version-command
    :make-completion-command

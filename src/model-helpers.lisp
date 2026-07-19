@@ -59,8 +59,8 @@
   (not (null (app-version-string app))))
 
 (defun make-built-in-option (name short description key)
-  (make-option :name name
-               :short short
+  (make-option :short short
+               :aliases (list name)
                :kind :flag
                :description description
                :hidden-p t
@@ -145,6 +145,30 @@
     (when (zerop (length value))
       (signal-cli-error 'cli-invalid-specification
                         (format nil "~A must be non-empty." kind)))))
+
+(defparameter +safe-cli-name-characters+
+  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+  "Characters permitted in a CLI identifier name (app / command / option / alias).
+
+App, command and option names are interpolated into generated shell-completion
+scripts, which the user later sources. Restricting identifiers to this set stops
+an author- or config-supplied name (e.g. \"foo; rm -rf ~\") from injecting shell
+syntax into that output. Free-form display text -- descriptions, value names,
+choices, candidate labels -- is not restricted here; the renderers already pass
+it through %completion-shell-quote.")
+
+(defun %safe-cli-name-p (name)
+  (and (plusp (length name))
+       (every (lambda (char) (find char +safe-cli-name-characters+)) name)))
+
+(defun validate-safe-identifier-names (values kind)
+  "Signal CLI-INVALID-SPECIFICATION unless every name in VALUES is a safe identifier."
+  (dolist (value values values)
+    (unless (%safe-cli-name-p value)
+      (signal-cli-error 'cli-invalid-specification
+                        (format nil
+                                "~A may contain only letters, digits, '-', '_' or '.': ~S"
+                                kind value)))))
 
 (defun normalize-option-relation-target (target)
   (etypecase target

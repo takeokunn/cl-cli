@@ -21,6 +21,59 @@
                                                  :command-name command-name)
                   out)))
 
+(defun %completion-bash-cur-case-source (app)
+  (with-output-to-string (out)
+    (let ((global-options (app-global-options app)))
+      (format out "  case \"$cur\" in~%")
+      (write-string (%completion-bash-value-case-body global-options) out)
+      (format out "  esac~%")
+      (format out "  case \"$prev\" in~%")
+      (write-string (%completion-bash-option-case-body global-options) out)
+      (format out "  esac~%")
+      (when (%completion-visible-commands app)
+        (format out "  if (( cword == 1 )); then~%")
+        (format out "    COMPREPLY=( $(compgen -W ~A -- \"$cur\") )~%"
+                (%completion-shell-quote
+                 (%completion-space-joined
+                  (%completion-visible-command-tokens app))))
+        (format out "    return 0~%")
+        (format out "  fi~%"))
+      (format out "  if [[ \"$cur\" == -* ]]; then~%")
+      (format out "    COMPREPLY=( $(compgen -W ~A -- \"$cur\") )~%"
+              (%completion-shell-quote
+               (%completion-space-joined
+                (%completion-command-option-tokens app nil))))
+      (format out "    return 0~%")
+      (format out "  fi~%"))))
+
+(defun %completion-bash-command-case-source (app command)
+  (with-output-to-string (out)
+    (let* ((command-name (command-name command))
+           (options (append (app-global-options app)
+                            (command-options command))))
+      (format out "  case \"${words[1]}\" in~%")
+      (format out "    ~A)~%"
+              (%completion-case-labels (%completion-command-names command)))
+      (format out "      case \"$cur\" in~%")
+      (write-string (%completion-bash-value-case-body options
+                                                       :command-name command-name)
+                    out)
+      (format out "      esac~%")
+      (format out "      case \"~A:$prev\" in~%" command-name)
+      (write-string (%completion-bash-option-case-body options
+                                                        :command-name command-name)
+                    out)
+      (format out "      esac~%")
+      (format out "      if [[ \"$cur\" == -* ]]; then~%")
+      (format out "        COMPREPLY=( $(compgen -W ~A -- \"$cur\") )~%"
+              (%completion-shell-quote
+               (%completion-space-joined
+                (%completion-command-option-tokens app command))))
+      (format out "      fi~%")
+      (format out "      return 0~%")
+      (format out "      ;;~%")
+      (format out "  esac~%"))))
+
 (defun render-bash-completion (app &optional stream)
   "Render a bash completion script."
   (let ((stream (or stream *standard-output*))

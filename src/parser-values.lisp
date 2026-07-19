@@ -94,10 +94,15 @@
                     (format nil "Option ~A does not take a value." token-name)))
 
 (defun prepare-option-parser-state (app option-specs)
+  ;; The declared option-relationship graph is validated once, at spec
+  ;; construction time, by MAKE-APP -> %VALIDATE-APP-SPEC (which checks the
+  ;; identical built-in + global (+ command) spec sets). Specs are immutable
+  ;; after construction, so re-running VALIDATE-OPTION-RELATIONSHIPS-DECLARED on
+  ;; every PARSE-ARGV is pure waste -- it rebuilt a cl-prolog rulebase and ran
+  ;; the :invalid-closure proof search twice per parse (~82% of parse time).
   (let* ((specs (option-specs-with-built-ins app option-specs))
-         (validated-specs (validate-option-relationships-declared specs))
-         (table (option-table-from-specs validated-specs)))
-    (values validated-specs table)))
+         (table (option-table-from-specs specs)))
+    (values specs table)))
 
 (defun map-option-values (specs parsed-values fn)
   (dolist (spec specs)

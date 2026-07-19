@@ -21,7 +21,8 @@
   default-present-p
   consume-optional-value-p
   stop-parsing-p
-  hidden-p)
+  hidden-p
+  group)
 
 (defstruct (positional-spec
             (:constructor %make-positional-spec)
@@ -107,10 +108,11 @@
     (%validate-related-option-target specs spec target relation)))
 
 (defun validate-option-relationships-declared (specs)
-  (dolist (spec specs specs)
+  (dolist (spec specs)
     (%validate-related-option-targets specs spec "requires" (option-requires spec))
     (%validate-related-option-targets specs spec "conflicts-with"
-                                      (option-conflicts-with spec))))
+                                      (option-conflicts-with spec)))
+  (validate-option-relation-graph specs))
 
 (defun make-option (&key key name short aliases kind description value-name (default nil default-supplied-p)
                       env-var env-vars choices completion-candidates parser required-p requires
@@ -154,6 +156,7 @@ character or short-name string. ALIASES is a list of additional option names."
       (signal-cli-error 'cli-invalid-specification
                         "An option needs at least one name."))
     (validate-non-empty-strings names "Option names")
+    (validate-safe-identifier-names names "Option names")
     (when resolved-value-name
       (validate-non-empty-strings (list resolved-value-name) "Option value names"))
     (validate-option-multiplicity resolved-kind multiple-p)
@@ -176,6 +179,48 @@ character or short-name string. ALIASES is a list of additional option names."
                        :consume-optional-value-p consume-optional-value-p
                        :stop-parsing-p stop-parsing-p
                        :hidden-p hidden-p)))
+
+(defstruct (option-group (:constructor %make-option-group))
+  "A set of options that participate together in an exclusive-choice relationship."
+  members
+  required-p)
+
+(defun %wire-exclusive-group (options required-p)
+  "Give each option in OPTIONS the others as conflicts and a shared group marker.
+
+Exclusivity is enforced by the same cl-prolog-backed conflict validation used
+for :conflicts-with (including hidden-target-safe error messages). Conflicts an
+option already declares are preserved. The shared OPTION-GROUP lets parsing add
+the at-least-one obligation when REQUIRED-P, and lets help render the members as
+a single choice instead of pairwise conflicts."
+  (let ((keys (mapcar #'option-key options))
+        (group (%make-option-group :members (mapcar #'option-key options)
+                                   :required-p required-p)))
+    (dolist (option options)
+      (let ((others (remove (option-key option) keys)))
+        (setf (option-conflicts-with option)
+              (remove-duplicates (append (option-conflicts-with option) others))
+              (option-group option) group)))
+    (copy-list options)))
+
+(defun exclusive-group (&rest options)
+  "Wire OPTIONS as a mutually-exclusive group and return them as a fresh list.
+
+At most one option in the group may be supplied on the command line. Splice the
+result into :global-options or a command's :options, e.g.
+
+  :global-options (exclusive-group (make-option :name \"json\" :kind :flag)
+                                   (make-option :name \"yaml\" :kind :flag)
+                                   (make-option :name \"table\" :kind :flag))"
+  (%wire-exclusive-group options nil))
+
+(defun required-exclusive-group (&rest options)
+  "Wire OPTIONS as an exactly-one group and return them as a fresh list.
+
+Mutual exclusion is enforced exactly as by EXCLUSIVE-GROUP (at most one member).
+In addition, parsing signals CLI-MISSING-OPTION-VALUE when none of the members is
+supplied, so callers must choose precisely one."
+  (%wire-exclusive-group options t))
 
 (defun make-positional (&key key name description parser (default nil default-supplied-p) required-p rest-p)
   "Create a positional argument specification."
@@ -208,6 +253,8 @@ character or short-name string. ALIASES is a list of additional option names."
       (signal-cli-error 'cli-invalid-specification
                         "A command needs a non-empty name."))
     (validate-non-empty-strings resolved-aliases "Command aliases")
+    (validate-safe-identifier-names (list resolved-name) "Command name")
+    (validate-safe-identifier-names resolved-aliases "Command aliases")
     (%make-command-spec :name resolved-name
                         :aliases resolved-aliases
                         :group (normalize-command-group group)

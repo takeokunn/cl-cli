@@ -24,6 +24,24 @@
                    (public-option-candidate-p resolved))
           (push target targets))))))
 
+(defun %option-group-member-names (option options)
+  "Public display names of the members of OPTION's exclusive group, or NIL."
+  (let ((group (option-group option)))
+    (when group
+      (loop for key in (option-group-members group)
+            for spec = (resolve-related-option-spec options key)
+            when (and spec (public-option-candidate-p spec))
+              collect (option-token-display-name (first (option-names spec)))))))
+
+(defun %option-intra-group-conflict-p (option options target)
+  "True when TARGET is another member of OPTION's own exclusive group."
+  (let ((group (option-group option)))
+    (and group
+         (let ((resolved (resolve-related-option-spec options target)))
+           (and resolved
+                (member (option-key resolved)
+                        (option-group-members group)))))))
+
 (defun %option-metadata-parts (option options)
   (let ((parts nil))
     (when (option-multiple-p option)
@@ -36,6 +54,14 @@
       (push (format nil "env: ~{~A~^, ~}" (option-env-vars option)) parts))
     (when (option-choices option)
       (push (format nil "choices: ~{~A~^ | ~}" (option-choices option)) parts))
+    (let ((group-members (%option-group-member-names option options)))
+      (when group-members
+        (push (format nil "~A one of: ~{~A~^ | ~}"
+                      (if (option-group-required-p (option-group option))
+                          "exactly"
+                          "at most")
+                      group-members)
+              parts)))
     (let ((visible-requires (%public-relation-targets option options
                                                       (option-requires option))))
       (when visible-requires
@@ -43,8 +69,13 @@
                       (mapcar #'option-relation-target-display-name
                               visible-requires))
               parts)))
-    (let ((visible-conflicts (%public-relation-targets option options
-                                                       (option-conflicts-with option))))
+    ;; Conflicts among members of this option's own group are already conveyed by
+    ;; the "one of" line above; only surface conflicts with options outside it.
+    (let ((visible-conflicts
+            (remove-if (lambda (target)
+                         (%option-intra-group-conflict-p option options target))
+                       (%public-relation-targets option options
+                                                 (option-conflicts-with option)))))
       (when visible-conflicts
         (push (format nil "conflicts: ~{~A~^, ~}"
                       (mapcar #'option-relation-target-display-name
@@ -138,3 +169,27 @@
   (format stream "  ~24A ~A~%"
           (%command-display-name command)
           (or (command-description command) "")))
+
+(defun %format-command-dispatch-usage (app)
+  (format nil "Usage: ~A <command> [args]~%" (app-name app)))
+
+(defun %print-commands (stream commands)
+  (let ((sections (%command-sections (%visible-commands commands))))
+    (when sections
+      (format stream "~&Commands:~%")
+      (dolist (section sections)
+        (when (car section)
+          (format stream "~&~A:~%" (car section)))
+        (dolist (command (cdr section))
+          (%print-command-row stream command))))))
+
+(defun %print-positional-row (stream positional)
+  (format stream "  ~24A ~A~%"
+          (%format-positional-token positional)
+          (or (positional-spec-description positional) "")))
+
+(defun %print-examples (stream examples)
+  (when examples
+    (format stream "~&Examples:~%")
+    (dolist (example examples)
+      (format stream "  ~A~%" example))))

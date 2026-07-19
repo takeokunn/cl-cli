@@ -1,5 +1,8 @@
 (in-package :cl-cli)
 
+(defun help-stream (stream)
+  (or stream *standard-output*))
+
 (defun %visible-options (options)
   (remove-if #'option-hidden-p options))
 

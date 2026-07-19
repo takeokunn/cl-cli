@@ -1,5 +1,21 @@
 (defpackage :cl-cli/tests
   (:use :cl :cl-cli)
+  (:import-from :cl-prolog
+                :assertz
+                :make-rulebase
+                :query-prolog)
+  (:import-from :cl-prolog/weave
+                :deftest-queries)
+  (:import-from :cl-weave
+                :describe-sequential
+                :expect
+                :gen-list
+                :gen-member
+                :gen-string
+                :it
+                :it-property
+                :run-all
+                :signals)
   (:export :run-tests))
 
 (in-package :cl-cli/tests)

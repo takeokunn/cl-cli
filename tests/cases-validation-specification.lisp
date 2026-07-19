@@ -1,160 +1,166 @@
 (in-package :cl-cli/tests)
 
-(deftest invalid-option-parser-errors-are-usage-errors
-  (let* ((positive (make-option
-                    :name "count"
-                    :kind :value
-                    :parser (lambda (value)
-                              (let ((number (parse-integer value)))
-                                (unless (plusp number)
-                                  (error "Expected positive integer."))
-                                number))))
-         (app (make-app :name "trade" :global-options (list positive))))
-    (signals cli-invalid-option-value
-      (parse-argv app '("trade" "--count" "0"))))
-  t)
+(describe-sequential "validation specification"
+  (it "maps invalid option parser errors to usage errors"
+    (let* ((positive (make-option
+                      :name "count"
+                      :kind :value
+                      :parser (lambda (value)
+                                (let ((number (parse-integer value)))
+                                  (unless (plusp number)
+                                    (error "Expected positive integer."))
+                                  number))))
+           (app (make-app :name "trade" :global-options (list positive))))
+      (signals cli-invalid-option-value
+        (parse-argv app '("trade" "--count" "0")))))
 
-(deftest duplicate-option-names-are-invalid
-  (let* ((left (make-option :name "verbose" :short #\v))
-         (right (make-option :name "version" :short #\v)))
+  (it "rejects duplicate option names"
+    (let ((left (make-option :name "verbose" :short #\v))
+          (right (make-option :name "version" :short #\v)))
+      (signals-invalid-specification
+        (make-app :name "demo" :global-options (list left right)))))
+
+  (it "rejects duplicate command names"
+    (let ((left (make-command :name "build"))
+          (right (make-command :name "build")))
+      (signals-invalid-specification
+        (make-app :name "demo" :commands (list left right)))))
+
+  (it "rejects duplicate command aliases"
+    (let ((left (make-command :name "build"
+                              :aliases '("compile")))
+          (right (make-command :name "release"
+                               :aliases '("compile"))))
+      (signals-invalid-specification
+        (make-app :name "demo" :commands (list left right)))))
+
+  (it "requires non-empty app names"
     (signals-invalid-specification
-      (make-app :name "demo" :global-options (list left right))))
-  t)
+      (make-app)
+      (make-app :name "")))
 
-(deftest duplicate-command-names-are-invalid
-  (let* ((left (make-command :name "build"))
-         (right (make-command :name "build")))
+  (it "requires non-empty command names"
     (signals-invalid-specification
-      (make-app :name "demo" :commands (list left right))))
-  t)
+      (make-command)
+      (make-command :name "")))
 
-(deftest duplicate-command-aliases-are-invalid
-  (let* ((left (make-command :name "build"
-                             :aliases '("compile")))
-         (right (make-command :name "release"
-                              :aliases '("compile"))))
+  (it "requires non-empty positional name when key is omitted"
     (signals-invalid-specification
-      (make-app :name "demo" :commands (list left right))))
-  t)
+      (make-positional :name "")))
 
-(deftest app-name-must-be-present-and-non-empty
-  (signals-invalid-specification
-    (make-app)
-    (make-app :name ""))
-  t)
+  (it "requires non-empty option names"
+    (signals-invalid-specification
+      (make-option :name "")
+      (make-option :aliases '(""))))
 
-(deftest command-name-must-be-present-and-non-empty
-  (signals-invalid-specification
-    (make-command)
-    (make-command :name ""))
-  t)
+  (it "requires non-empty option value names"
+    (signals-invalid-specification
+      (make-option :name "output"
+                   :kind :value
+                   :value-name "")))
 
-(deftest positional-name-must-be-non-empty-when-key-is-omitted
-  (signals-invalid-specification
-    (make-positional :name ""))
-  t)
+  (it "requires non-empty option env vars"
+    (signals-invalid-specification
+      (make-option :name "profile"
+                   :kind :value
+                   :env-var "")
+      (make-option :name "profile"
+                   :kind :value
+                   :env-vars '("PRIMARY_PROFILE" ""))))
 
-(deftest option-names-must-be-non-empty
-  (signals-invalid-specification
-    (make-option :name "")
-    (make-option :aliases '("")))
-  t)
+  (it "requires non-empty option choices"
+    (signals-invalid-specification
+      (make-option :name "mode"
+                   :kind :value
+                   :choices '("dev" ""))))
 
-(deftest option-value-name-must-be-non-empty
-  (signals-invalid-specification
-    (make-option :name "output"
-                 :kind :value
-                 :value-name ""))
-  t)
+  (it "requires non-empty completion candidates"
+    (signals-invalid-specification
+      (make-option :name "mode"
+                   :kind :value
+                   :completion-candidates '(""))
+      (make-option :name "mode"
+                   :kind :value
+                   :completion-candidates '(("dev" . "")))))
 
-(deftest option-env-vars-must-be-non-empty
-  (signals-invalid-specification
-    (make-option :name "profile"
-                 :kind :value
-                 :env-var "")
-    (make-option :name "profile"
-                 :kind :value
-                 :env-vars '("PRIMARY_PROFILE" "")))
-  t)
+  (it "requires non-empty command aliases"
+    (signals-invalid-specification
+      (make-command :name "build" :aliases '(""))))
 
-(deftest option-choices-must-be-non-empty
-  (signals-invalid-specification
-    (make-option :name "mode"
-                 :kind :value
-                 :choices '("dev" "")))
-  t)
-
-(deftest completion-candidates-must-be-non-empty
-  (signals-invalid-specification
-    (make-option :name "mode"
-                 :kind :value
-                 :completion-candidates '(""))
-    (make-option :name "mode"
-                 :kind :value
-                 :completion-candidates '(("dev" . ""))))
-  t)
-
-(deftest command-aliases-must-be-non-empty
-  (signals-invalid-specification
-    (make-command :name "build" :aliases '("")))
-  t)
-
-(deftest command-groups-and-examples-must-be-non-empty
-  (signals-invalid-specification
-    (make-command :name "build"
-                  :group "")
-    (make-command :name "build"
-                  :examples '("build src" ""))
-    (make-app :name "demo"
-              :examples '("demo build" "")))
-  t)
-
-(deftest root-rest-positional-must-be-last
-  (signals-invalid-specification
-    (make-app :name "demo"
-              :positionals (list (make-positional :key :args :rest-p t)
-                                 (make-positional :key :target :required-p t))))
-  t)
-
-(deftest command-rest-positional-must-be-last
-  (signals-invalid-specification
-    (make-app :name "demo"
-              :commands (list (make-command
-                               :name "run"
-                               :positionals (list (make-positional :key :args :rest-p t)
-                                                  (make-positional :key :target :required-p t))))))
-  t)
-
-(deftest duplicate-root-positional-keys-are-invalid
-  (signals-invalid-specification
-    (make-app :name "demo"
-              :positionals (list (make-positional :key :target)
-                                 (make-positional :key :target))))
-  t)
-
-(deftest duplicate-command-positional-keys-are-invalid
-  (signals-invalid-specification
-    (make-app :name "demo"
-              :commands (list (make-command
-                               :name "run"
-                               :positionals (list (make-positional :key :target)
-                                                  (make-positional :key :target))))))
-  t)
-
-(deftest default-command-must-resolve-to-a-known-command
-  (caught-signal= (cli-invalid-specification condition)
+  (it "requires non-empty command groups and examples"
+    (signals-invalid-specification
+      (make-command :name "build"
+                    :group "")
+      (make-command :name "build"
+                    :examples '("build src" ""))
       (make-app :name "demo"
-                :commands (list (make-command :name "build"))
-                :default-command "deploy")
-      (:searches cli-error-message "Unknown :default-command for demo: deploy"))
-  t)
+                :examples '("demo build" ""))))
 
-(deftest command-options-cannot-collide-with-global-options
-  (let ((verbose (make-option :name "verbose" :short #\v))
-        (build (make-command :name "build"
-                             :options (list (make-option :name "verbose")))))
+  (it "requires root rest positional to be last"
     (signals-invalid-specification
       (make-app :name "demo"
-                :global-options (list verbose)
-                :commands (list build))))
-  t)
+                :positionals (list (make-positional :key :args :rest-p t)
+                                   (make-positional :key :target :required-p t)))))
+
+  (it "requires command rest positional to be last"
+    (signals-invalid-specification
+      (make-app :name "demo"
+                :commands (list (make-command
+                                 :name "run"
+                                 :positionals (list (make-positional :key :args :rest-p t)
+                                                    (make-positional :key :target :required-p t)))))))
+
+  (it "rejects duplicate root positional keys"
+    (signals-invalid-specification
+      (make-app :name "demo"
+                :positionals (list (make-positional :key :target)
+                                   (make-positional :key :target)))))
+
+  (it "rejects duplicate command positional keys"
+    (signals-invalid-specification
+      (make-app :name "demo"
+                :commands (list (make-command
+                                 :name "run"
+                                 :positionals (list (make-positional :key :target)
+                                                    (make-positional :key :target)))))))
+
+  (it "requires default command to resolve to a known command"
+    (caught-signal= (cli-invalid-specification condition)
+        (make-app :name "demo"
+                  :commands (list (make-command :name "build"))
+                  :default-command "deploy")
+      (:searches cli-error-message "Unknown :default-command for demo: deploy")))
+
+  (it "rejects command options colliding with global options"
+    (let ((verbose (make-option :name "verbose" :short #\v))
+          (build (make-command :name "build"
+                               :options (list (make-option :name "verbose")))))
+      (signals-invalid-specification
+        (make-app :name "demo"
+                  :global-options (list verbose)
+                  :commands (list build)))))
+
+  (it "rejects shell-unsafe app names"
+    (signals-invalid-specification
+      (make-app :name "foo; touch pwned #")
+      (make-app :name "foo$(id)")
+      (make-app :name "foo bar")))
+
+  (it "rejects shell-unsafe option names"
+    (signals-invalid-specification
+      (make-option :name "foo; rm -rf ~" :kind :flag)
+      (make-option :name "bad name" :kind :value)
+      (make-option :name "x`id`" :kind :flag)))
+
+  (it "rejects shell-unsafe command names and aliases"
+    (signals-invalid-specification
+      (make-command :name "foo) ; touch pwned ;#")
+      (make-command :name "ok" :aliases '("a$(id)"))))
+
+  (it "accepts conventional identifier names"
+    (let ((app (make-app
+                :name "cl-cc.v2"
+                :global-options (list (make-option :name "dry_run" :kind :flag))
+                :commands (list (make-command :name "build"
+                                              :aliases '("b"))))))
+      (expect (string= "cl-cc.v2" (app-name app))))))

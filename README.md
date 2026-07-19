@@ -114,10 +114,15 @@ Help output is context-sensitive:
 - command aliases are shown in the command list
 - command lists can be grouped with `:group` for large subcommand surfaces
 - option relationships can enforce `:requires` and `:conflicts-with`
+- mutually-exclusive option sets can be declared with `exclusive-group`, or
+  `required-exclusive-group` for an "exactly one of" obligation
 - invalid app specs fail fast during `make-app`, not only during parsing
 - spec constructors reject empty strings for user-facing identifiers such as
   names, aliases, value names, env vars, choices, completion candidates,
   groups, and examples
+- app, command, and option names are restricted to safe identifier characters
+  (letters, digits, `-`, `_`, `.`), so author- or config-supplied names cannot
+  inject shell syntax into generated completion scripts
 - unknown commands and options suggest the nearest known spelling when the typo is close enough
 - `--version` is only shown in help when the app has a version string
 
@@ -188,6 +193,26 @@ environment defaults, and literal defaults are resolved.
 When a relation target points at a hidden option, parsing still honors the
 relation but generated help omits that hidden target from public metadata, and
 runtime relationship errors avoid printing the hidden option name.
+
+To make a set of options mutually exclusive (at most one may be supplied),
+splice them through `cl-cli:exclusive-group` instead of hand-writing every
+pairwise `:conflicts-with`. Each member gains the others as conflicts, so
+exclusivity reuses the same validation and hidden-target-safe error messages:
+
+```lisp
+:global-options (cl-cli:exclusive-group
+                 (cl-cli:make-option :name "json" :kind :flag)
+                 (cl-cli:make-option :name "yaml" :kind :flag)
+                 (cl-cli:make-option :name "table" :kind :flag))
+```
+
+Conflicts an option already declares are preserved, so a group member can still
+conflict with options outside the group.
+
+When the choice is mandatory, use `cl-cli:required-exclusive-group` instead:
+exclusivity is enforced as above, and parsing additionally fails with
+`Exactly one of ...` when none of the members is supplied — expressing an
+"exactly one of" obligation that pairwise `:conflicts-with` cannot.
 
 For larger CLIs, group related commands in app help without changing parsing:
 

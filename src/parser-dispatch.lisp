@@ -29,13 +29,18 @@
 (defun finalize-command-options (command parsed-options)
   (collect-option-values (command-options command) parsed-options))
 
-(defun resolve-dispatch-command (app command-table remaining global-stop-parsing-p)
+(defun resolve-dispatch-command (app command-table remaining global-stop-parsing-p
+                                 &optional literal-separator-seen-p)
   (cond
     ((and (null remaining)
           (app-default-command app))
      (values (resolve-default-command app command-table) remaining))
     ((and remaining
           (not global-stop-parsing-p)
+          ;; After a literal "--", every remaining token is a positional by
+          ;; POSIX/GNU convention (e.g. `git -- log`); do not treat the next one
+          ;; as a command name to dispatch.
+          (not literal-separator-seen-p)
           (not (command-line-option-p (first remaining))))
      (multiple-value-bind (resolved-command consume-token-p)
          (resolve-command-selection app command-table (first remaining))
@@ -90,3 +95,31 @@
                               nil
                               parsed-positionals))))
 
+(defun parse-argv (app argv &key (argv0 (first argv)))
+  "Parse ARGV according to APP and return an invocation."
+  (let* ((*cli-error-app* app)
+         (*cli-error-command* nil)
+         (raw-argv (copy-list argv))
+         (arguments (rest argv))
+         (command-table (command-table-from-specs (app-commands app))))
+    (multiple-value-bind (global-values remaining global-action
+                          literal-separator-seen-p)
+        (parse-options-prefix app arguments (app-global-options app))
+      (let ((global-stop-parsing-p
+              (app-global-stop-parsing-p app global-values)))
+        (multiple-value-bind (command command-remaining)
+            (resolve-dispatch-command app command-table remaining
+                                      global-stop-parsing-p
+                                      literal-separator-seen-p)
+          (cond
+            ((member global-action '(:help :version))
+             (make-parser-invocation app nil argv0 raw-argv global-action
+                                     (merge-global-options app global-values nil)
+                                     nil nil))
+            (command
+             (parse-command-argv app command argv0 raw-argv
+                                 command-remaining global-values))
+            (t
+             (parse-root-argv app argv0 raw-argv remaining global-values
+                              global-stop-parsing-p
+                              literal-separator-seen-p))))))))

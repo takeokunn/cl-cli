@@ -1,26 +1,102 @@
 (in-package :cl-cli)
 
 (defun validate-option-relationships (values specs)
-  (dolist (spec specs values)
-    (when (plist-has-key-p values (option-key spec))
-      (dolist (target (option-requires spec))
-        (let ((dependency (resolve-related-option-spec specs target)))
-          (unless (plist-has-key-p values (option-key dependency))
+  ;; Most CLIs declare no requires/conflicts at all. Skip building a rulebase
+  ;; and running any Prolog proof search when there is nothing to validate --
+  ;; otherwise every parse pays for a rulebase plus O(present log present) empty
+  ;; queries that can only ever succeed vacuously.
+  (unless (some (lambda (spec)
+                  (or (option-requires spec)
+                      (option-conflicts-with spec)))
+                specs)
+    (return-from validate-option-relationships values))
+  (let* ((rulebase (make-option-relation-rulebase specs))
+         (present-specs
+           (remove-if-not (lambda (spec)
+                            (plist-has-key-p values (option-key spec)))
+                          specs))
+         ;; Each transitive required-key closure is a full cl-prolog proof
+         ;; search. The sort comparator below asks for the same option's closure
+         ;; on every comparison (O(n log n) queries) and the requires loop asks
+         ;; again, so memoize per key: one query per option, reused everywhere.
+         (closure-cache (make-hash-table :test #'eq))
+         (spec-by-key (make-hash-table :test #'eq)))
+    (dolist (spec specs)
+      (setf (gethash (option-key spec) spec-by-key) spec))
+    (flet ((closure-of (key)
+             (multiple-value-bind (cached present-p) (gethash key closure-cache)
+               (if present-p
+                   cached
+                   (setf (gethash key closure-cache)
+                         (transitive-required-option-keys rulebase key))))))
+     (let ((roots
+             ;; Report the most upstream failure first: an option that (directly
+             ;; or transitively) requires others is validated before them. A
+             ;; requiring option always has a strictly larger required-closure
+             ;; than anything it depends on, so ordering by closure size (with a
+             ;; key-name tiebreaker) is a valid strict weak ordering -- unlike the
+             ;; previous reachability comparator, which was non-transitive and so
+             ;; gave SORT undefined behaviour (notably across implementations).
+             (stable-sort-copy
+              present-specs
+              (lambda (left right)
+                (let ((left-size (length (closure-of (option-key left))))
+                      (right-size (length (closure-of (option-key right)))))
+                  (if (= left-size right-size)
+                      (string< (string (option-key left))
+                               (string (option-key right)))
+                      (> left-size right-size)))))))
+      (dolist (spec roots values)
+        (dolist (dependency-key (closure-of (option-key spec)))
+          (let ((dependency (gethash dependency-key spec-by-key)))
+            (unless (plist-has-key-p values (option-key dependency))
             (signal-cli-error 'cli-missing-dependent-option
-                              (format nil "Option ~A requires ~A."
-                                      (%option-display-name spec)
-                                      (public-option-display-name dependency))
+                              (if (option-hidden-p spec)
+                                  (format nil "A hidden option requires ~A."
+                                          (public-option-display-name dependency))
+                                  (format nil "Option ~A requires ~A."
+                                          (public-option-display-name spec)
+                                          (public-option-display-name dependency)))
                               :option (option-key spec)
                               :dependency (option-key dependency)))))
       (dolist (target (option-conflicts-with spec))
         (let ((other (resolve-related-option-spec specs target)))
           (when (plist-has-key-p values (option-key other))
             (signal-cli-error 'cli-conflicting-options
-                              (format nil "Option ~A conflicts with ~A."
-                                      (%option-display-name spec)
-                                      (public-option-display-name other))
+                              (if (option-hidden-p spec)
+                                  (format nil "A hidden option conflicts with ~A."
+                                          (public-option-display-name other))
+                                  (format nil "Option ~A conflicts with ~A."
+                                          (public-option-display-name spec)
+                                          (public-option-display-name other)))
                               :left-option (option-key spec)
-                              :right-option (option-key other))))))))
+                              :right-option (option-key other))))))))))
+
+(defun validate-required-option-groups (values specs)
+  "Signal CLI-MISSING-OPTION-VALUE when a required option group has no member set.
+
+Exclusivity within a group is already enforced through :conflicts-with, so this
+only checks the at-least-one obligation that REQUIRED-EXCLUSIVE-GROUP adds. Each
+distinct group is checked once."
+  (let ((seen (make-hash-table :test #'eq)))
+    (dolist (spec specs values)
+      (let ((group (option-group spec)))
+        (when (and group
+                   (option-group-required-p group)
+                   (not (gethash group seen)))
+          (setf (gethash group seen) t)
+          (unless (some (lambda (key) (plist-has-key-p values key))
+                        (option-group-members group))
+            (let ((member-specs
+                    (remove nil
+                            (mapcar (lambda (key)
+                                      (find key specs :key #'option-key :test #'eq))
+                                    (option-group-members group)))))
+              (signal-cli-error 'cli-missing-option-value
+                                (format nil "Exactly one of ~{~A~^, ~} is required."
+                                        (mapcar #'public-option-display-name
+                                                member-specs))
+                                :option (option-key (first member-specs))))))))))
 
 (defun option-table-from-specs (specs)
   (let ((table (make-hash-table :test 'equal)))
