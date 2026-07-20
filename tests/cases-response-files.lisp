@@ -40,6 +40,28 @@
       (with-parsed-argv (inv (response-file-app) '("tool" "@a.txt"))
         (expect (eq (option-value inv :verbose) t)))))
 
+  (it "preserves argv order when a response file is followed by more args"
+    (with-response-files ("opts.txt" "--output from-file")
+      (with-parsed-argv (inv (response-file-app)
+                         '("tool" "@opts.txt" "--verbose"))
+        (expect (string= (option-value inv :output) "from-file"))
+        (expect (option-value inv :verbose)))))
+
+  (it "signals a usage error for recursive response files"
+    (with-response-files ("loop.txt" "@loop.txt")
+      (signals cli-usage-error
+        (parse-argv (response-file-app) '("tool" "@loop.txt")))))
+
+  (it "parses negative numbers from response files like argv"
+    (let ((app (make-app :name "calc"
+                         :expand-response-files t
+                         :allow-negative-numbers t
+                         :positionals (list (make-positional :key :n
+                                                             :type :number)))))
+      (with-response-files ("n.txt" "-5")
+        (with-parsed-argv (inv app '("calc" "@n.txt"))
+          (expect (eql (positional-value inv :n) -5))))))
+
   (it "treats @@ as a literal leading @"
     (with-response-files ()
       (with-parsed-argv (inv (response-file-app) '("tool" "@@literal"))

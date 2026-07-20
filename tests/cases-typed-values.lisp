@@ -82,6 +82,14 @@
                                                                :type :number)))
                   '("tool" "--ratio" "1 2"))))
 
+  (it "accepts surrounding whitespace in numeric values"
+    (with-parsed-argv (inv (make-app :name "tool"
+                                     :global-options (list (make-option :name "ratio"
+                                                                        :kind :value
+                                                                        :type :number)))
+                          '("tool" "--ratio" "  1/2  "))
+      (expect (= (option-value inv :ratio) 1/2))))
+
   (it "coerces a string literal default through the typed parser"
     (with-parsed-argv (inv (typed-option-app :type :integer :default "7")
                           '("tool"))

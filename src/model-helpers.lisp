@@ -58,48 +58,6 @@ bare T (deprecated without a stated reason)."
                       (format nil "Duplicate ~A: ~A" kind display-name)))
   (setf (gethash key table) value))
 
-(defun app-version-string (app)
-  (let ((version (app-version app)))
-    (when version
-      (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) version)))
-        (when (> (length trimmed) 0)
-          trimmed)))))
-
-(defun app-supports-version-p (app)
-  (not (null (app-version-string app))))
-
-(defun make-built-in-option (name short description key)
-  (make-option :short short
-               :aliases (list name)
-               :kind :flag
-               :description description
-               :hidden-p t
-               :key key))
-
-(defun make-built-in-help-option ()
-  (make-built-in-option "help" #\h
-                        "Show help text for this command."
-                        :help))
-
-(defun make-built-in-version-option ()
-  (make-built-in-option "version" #\V
-                        "Show version information."
-                        :version))
-
-(defun built-in-option-p (spec)
-  (member (option-key spec) '(:help :version)))
-
-(defun built-in-option-specs (app)
-  (let ((specs (when (app-auto-help app)
-                 (list (make-built-in-help-option)))))
-    (when (app-supports-version-p app)
-      (push (make-built-in-version-option) specs))
-    (nreverse specs)))
-
-(defun option-specs-with-built-ins (app option-specs)
-  (append (built-in-option-specs app)
-          option-specs))
-
 (defun normalize-env-vars (env-var env-vars)
   (normalize-string-sequence (append (when env-var (list env-var))
                                       env-vars)
@@ -156,6 +114,20 @@ bare T (deprecated without a stated reason)."
     (when (zerop (length value))
       (signal-cli-error 'cli-invalid-specification
                         (format nil "~A must be non-empty." kind)))))
+
+(defun %control-character-p (char)
+  (let ((code (char-code char)))
+    (or (< code 32)
+        (= code 127)
+        (and (>= code 128) (< code 160)))))
+
+(defun validate-no-control-characters (values kind)
+  "Signal CLI-INVALID-SPECIFICATION when VALUES contain terminal controls."
+  (dolist (value values values)
+    (when (find-if #'%control-character-p value)
+      (signal-cli-error 'cli-invalid-specification
+                        (format nil "~A must not contain control characters: ~S"
+                                kind value)))))
 
 (defparameter +safe-cli-name-characters+
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
@@ -284,15 +256,18 @@ integers, bounded counts, numeric flags) needs no hand-written :parser lambda.
   "Read RAW as a single Lisp real number without evaluation, or NIL.
 
 *READ-EVAL* is bound off so a payload such as \"#.(delete-file ...)\" can never
-execute code, and the whole string must be exactly one numeric token: \"1 2\"
-and \"3x\" (which the reader would otherwise read as 1 or a symbol and stop
-early) are rejected because the read did not consume the entire string."
+execute code, and the whole string must be exactly one numeric token plus
+optional surrounding whitespace: \"1 2\" and \"3x\" (which the reader would
+otherwise read as 1 or a symbol and stop early) are rejected because the
+non-whitespace input was not fully consumed."
   (handler-case
       (multiple-value-bind (value end)
           (let ((*read-eval* nil))
             (read-from-string raw nil nil))
         (when (and (realp value)
-                   (= end (length raw)))
+                   (loop for index from end below (length raw)
+                         always (find (char raw index)
+                                      '(#\Space #\Tab #\Newline #\Return #\Page))))
           value))
     (error () nil)))
 

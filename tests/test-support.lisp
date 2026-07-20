@@ -88,6 +88,7 @@
                                  (search ,right ,text))))))
 
 (defmacro plist-values= (invocation accessor expected-label &rest pairs)
+  (declare (ignore expected-label))
   (let ((normalized-pairs
           (if (and pairs (every #'consp pairs))
               pairs
@@ -156,6 +157,7 @@
 (defmacro with-caught-signal-from-argv (((condition-type condition)
                                          (app app-form argv-form))
                                         &body body)
+  (declare (ignore app))
   (let ((app-sym (gensym "APP")))
     `(let ((,app-sym ,app-form))
        (caught-signal= (,condition-type ,condition)
@@ -168,6 +170,7 @@
             ,@(loop for (name argv-form) in bindings
                     collect `(,name (parse-argv ,app-sym ,argv-form))))
        (let ((,app ,app-sym))
+         (declare (ignorable ,app))
          ,@body))))
 
 (defun find-related-option-spec (specs target)
