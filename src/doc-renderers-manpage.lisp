@@ -20,40 +20,79 @@ as `--output`."
                (#\- (write-string "\\-" out))
                (t (write-char char out))))))
 
+(defun %roff-text-lines (text)
+  "Split free-form TEXT into roff-safe physical lines.
+
+Newlines terminate a line; other terminal controls are removed or normalized so
+author text cannot smuggle roff requests or terminal escapes into generated man
+pages."
+  (let ((lines nil)
+        (current (make-string-output-stream)))
+    (labels ((flush-line ()
+               (push (get-output-stream-string current) lines)
+               (setf current (make-string-output-stream))))
+      (loop for char across (or text "")
+            do (let ((code (char-code char)))
+                 (cond
+                   ((or (char= char #\Newline)
+                        (char= char #\Return))
+                    (flush-line))
+                   ((char= char #\Tab)
+                    (write-char #\Space current))
+                   ((or (< code 32)
+                        (= code 127)
+                        (and (>= code 128) (< code 160))))
+                   (t
+                    (write-char char current)))))
+      (flush-line)
+      (nreverse lines))))
+
+(defun %roff-single-line (text)
+  "Return TEXT folded to one roff-safe line for macro arguments."
+  (with-output-to-string (out)
+    (loop for line in (%roff-text-lines text)
+          for index from 0
+          do (when (> index 0)
+               (write-char #\Space out))
+             (write-string line out))))
+
 (defun %roff-text-line (stream text)
-  "Write TEXT as a body line, guarding a leading control character.
+  "Write TEXT as body lines, guarding leading roff control characters.
 
 A line that begins with `.` or `'` would be read as a roff request; prefixing
 `\\&` (a zero-width character) keeps author text such as a description that
-starts with a period from being interpreted as markup."
-  (let ((escaped (%roff-escape text)))
-    (if (and (plusp (length escaped))
-             (member (char escaped 0) '(#\. #\')))
-        (format stream "\\&~A~%" escaped)
-        (format stream "~A~%" escaped))))
+starts with a period from being interpreted as markup. This guard is applied to
+every physical line after embedded newlines are split."
+  (dolist (line (%roff-text-lines text))
+    (let ((escaped (%roff-escape line)))
+      (if (and (plusp (length escaped))
+               (member (char escaped 0) '(#\. #\')))
+          (format stream "\\&~A~%" escaped)
+          (format stream "~A~%" escaped)))))
 
 (defun %manpage-title (app)
   (let ((version (app-version-string app)))
     (if version
-        (format nil "~A ~A" (app-name app) version)
-        (app-name app))))
+        (format nil "~A ~A"
+                (%roff-single-line (app-name app))
+                (%roff-single-line version))
+        (%roff-single-line (app-name app)))))
 
 (defun %manpage-header (app stream)
   (format stream ".TH ~S ~S ~S ~S ~S~%"
-          (string-upcase (app-name app))
+          (string-upcase (%roff-single-line (app-name app)))
           "1"
-          (or (app-manual-date app) "")
+          (%roff-single-line (app-manual-date app))
           (%manpage-title app)
           "User Commands"))
 
 (defun %manpage-name-section (app stream)
   (format stream ".SH NAME~%")
   (let ((summary (%doc-app-summary app)))
-    (if summary
-        (format stream "~A \\- ~A~%"
-                (%roff-escape (app-name app))
-                (%roff-escape summary))
-        (format stream "~A~%" (%roff-escape (app-name app))))))
+    (%roff-text-line stream
+                     (if summary
+                         (format nil "~A - ~A" (app-name app) summary)
+                         (app-name app)))))
 
 (defun %manpage-synopsis-section (app stream)
   (format stream ".SH SYNOPSIS~%")
@@ -151,14 +190,19 @@ appears as its own path-qualified entry."
 
 (defun %manpage-env-backed-options (app)
   "Every visible option (global or on any command, nested included) with env vars."
-  (labels ((walk (commands)
-             (loop for command in commands
-                   append (append (command-options command)
-                                  (walk (command-subcommands command))))))
-    (remove-if-not #'option-env-vars
-                   (remove-if #'option-hidden-p
-                              (append (app-global-options app)
-                                      (walk (app-commands app)))))))
+  (let (options)
+    (labels ((collect (commands)
+               (dolist (command commands)
+                 (dolist (option (command-options command))
+                   (push option options))
+                 (collect (command-subcommands command)))))
+      (collect (app-commands app))
+      (setf options (nreverse options))
+      (dolist (option (reverse (app-global-options app)))
+        (push option options))
+      (remove-if-not #'option-env-vars
+                     (remove-if #'option-hidden-p
+                                options)))))
 
 (defun %manpage-environment-section (app stream)
   (let ((options (%manpage-env-backed-options app)))

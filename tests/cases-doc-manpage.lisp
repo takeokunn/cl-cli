@@ -85,6 +85,36 @@
            (text (manpage-text app)))
       (assert-searches text "\\&.hidden leading dot")))
 
+  (it "guards embedded roff control lines in free-form text"
+    (let* ((app (make-app :name "tool"
+                          :version (format nil "1.0~%.TH OWNED")
+                          :manual-date (format nil "2026-07-20~%.TH DATE")
+                          :summary (format nil "safe~%.SH NAME2")
+                          :description (format nil "description~%.SH PWNED~%'bad")
+                          :help-footer (format nil "footer~%.PP injected")
+                          :examples (list (format nil "tool run~%.TH HACKED"))
+                          :authors (list (format nil "Ada~%.SH AUTHORS2"))
+                          :see-also (list (format nil "git(1)~%.SH SEE2"))))
+           (text (manpage-text app)))
+      (assert-searches text
+                       "\\&.SH NAME2"
+                       "\\&.SH PWNED"
+                       "\\&'bad"
+                       "\\&.PP injected"
+                       "\\&.TH HACKED"
+                       "\\&.SH AUTHORS2"
+                       "\\&.SH SEE2")
+      (assert-not-searches text
+                           (format nil "~%.SH NAME2")
+                           (format nil "~%.SH PWNED")
+                           (format nil "~%'bad")
+                           (format nil "~%.PP injected")
+                           (format nil "~%.TH HACKED")
+                           (format nil "~%.SH AUTHORS2")
+                           (format nil "~%.SH SEE2")
+                           (format nil "~%.TH OWNED")
+                           (format nil "~%.TH DATE"))))
+
   (it "returns the page as a string when no stream is given"
     (let ((result (render-manpage (manpage-demo-app))))
       (expect (stringp result))

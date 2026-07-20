@@ -56,6 +56,48 @@
            (text (markdown-text app)))
       (assert-searches text "left \\| right")))
 
+  (it "escapes raw HTML and Markdown controls in prose metadata"
+    (let* ((app (make-app :name "tool"
+                          :version "<b>2.0</b> *beta*"
+                          :description "<img src=x onerror=alert(1)> [docs](javascript:alert(1))"
+                          :commands (list (make-command
+                                           :name "run"
+                                           :description "Run <script>alert(1)</script>"
+                                           :help-footer "See [unsafe](javascript:alert(1))."))))
+           (text (markdown-text app)))
+      (assert-searches text
+                       "**Version:** &lt;b&gt;2.0&lt;/b&gt; \\*beta\\*"
+                       "&lt;img src=x onerror=alert(1)&gt;"
+                       "\\[docs\\](javascript:alert(1))"
+                       "Run &lt;script&gt;alert(1)&lt;/script&gt;"
+                       "See \\[unsafe\\](javascript:alert(1)).")
+      (assert-not-searches text
+                           "<img"
+                            "<script>"
+                            "<b>2.0</b>"
+                            "[docs](javascript:alert(1))")))
+
+  (it "strips control characters and uses delimiter-safe Markdown fences"
+    (let* ((escape (string (code-char 27)))
+           (app (make-app :name "tool"
+                          :description (format nil "safe~Atext" escape)
+                          :examples (list "echo ``` cannot close fence")))
+           (text (markdown-text app)))
+      (assert-searches text
+                       "safetext"
+                       "````"
+                       "echo ``` cannot close fence")
+      (assert-not-searches text escape)))
+
+  (it "uses delimiter-safe Markdown code spans for value names"
+    (let* ((app (make-app :name "tool"
+                          :global-options (list (make-option :name "template"
+                                                             :kind :value
+                                                             :value-name "VA`L"
+                                                             :description "Template."))))
+           (text (markdown-text app)))
+      (assert-searches text "``--template <VA`L>``")))
+
   (it "renders an arguments table for a flat positional app"
     (let* ((app (make-app :name "script"
                           :positionals (list (make-positional :key :file
