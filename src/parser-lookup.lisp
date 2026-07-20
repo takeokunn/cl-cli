@@ -26,9 +26,8 @@
          ;; on every comparison (O(n log n) queries) and the requires loop asks
          ;; again, so memoize per key: one query per option, reused everywhere.
          (closure-cache (make-hash-table :test #'eq))
-         (spec-by-key (make-hash-table :test #'eq)))
-    (dolist (spec specs)
-      (setf (gethash (option-key spec) spec-by-key) spec))
+         (spec-by-key (%option-key-table specs))
+         (spec-by-target (%option-target-table specs)))
     (flet ((closure-of (key)
              (multiple-value-bind (cached present-p) (gethash key closure-cache)
                (if present-p
@@ -82,7 +81,7 @@
                               :option (option-key spec)
                               :alternatives (mapcar #'option-key alternatives)))))
       (dolist (target (option-conflicts-with spec))
-        (let ((other (resolve-related-option-spec specs target)))
+        (let ((other (%lookup-option-target spec-by-target target)))
           (when (plist-has-key-p values (option-key other))
             (signal-cli-error 'cli-conflicting-options
                               (if (option-hidden-p spec)
@@ -100,7 +99,8 @@
 Exclusivity within a group is already enforced through :conflicts-with, so this
 only checks the at-least-one obligation that REQUIRED-EXCLUSIVE-GROUP adds. Each
 distinct group is checked once."
-  (let ((seen (make-hash-table :test #'eq)))
+  (let ((seen (make-hash-table :test #'eq))
+        (spec-by-key (%option-key-table specs)))
     (dolist (spec specs values)
       (let ((group (option-group spec)))
         (when (and group
@@ -112,7 +112,7 @@ distinct group is checked once."
             (let ((member-specs
                     (remove nil
                             (mapcar (lambda (key)
-                                      (find key specs :key #'option-key :test #'eq))
+                                      (gethash key spec-by-key))
                                     (option-group-members group)))))
               (signal-cli-error 'cli-missing-option-value
                                 (format nil "Exactly one of ~{~A~^, ~} is required."
@@ -125,7 +125,8 @@ distinct group is checked once."
 
 Each distinct :INCLUSIVE group is checked once. Hidden members are named
 generically in the error, mirroring the other relationship diagnostics."
-  (let ((seen (make-hash-table :test #'eq)))
+  (let ((seen (make-hash-table :test #'eq))
+        (spec-by-key (%option-key-table specs)))
     (dolist (spec specs values)
       (let ((group (option-group spec)))
         (when (and group
@@ -136,7 +137,7 @@ generically in the error, mirroring the other relationship diagnostics."
                  (present (remove-if-not (lambda (key) (plist-has-key-p values key)) members))
                  (missing (remove-if (lambda (key) (plist-has-key-p values key)) members)))
             (when (and present missing)
-              (flet ((named (key) (find key specs :key #'option-key :test #'eq)))
+              (flet ((named (key) (gethash key spec-by-key)))
                 (signal-cli-error
                  'cli-missing-dependent-option
                  (format nil "Options ~{~A~^, ~} must be used together; missing ~{~A~^, ~}."
@@ -145,8 +146,8 @@ generically in the error, mirroring the other relationship diagnostics."
                  :option (option-key (named (first present)))
                  :dependency (first missing))))))))))
 
-(defun %relation-target-present-p (values specs target)
-  (let ((spec (resolve-related-option-spec specs target)))
+(defun %relation-target-present-p (values spec-by-target target)
+  (let ((spec (%lookup-option-target spec-by-target target)))
     (and spec (plist-has-key-p values (option-key spec)))))
 
 (defun validate-conditional-requirements (values specs)
@@ -154,31 +155,33 @@ generically in the error, mirroring the other relationship diagnostics."
 
 :required-if makes an option mandatory when any listed target is present;
 :required-unless makes it mandatory unless any listed target is present."
-  (dolist (spec specs values)
-    (unless (plist-has-key-p values (option-key spec))
-      (let ((trigger (find-if (lambda (target)
-                                (%relation-target-present-p values specs target))
-                              (option-required-if spec))))
-        (when trigger
+  (let ((spec-by-target (%option-target-table specs)))
+    (dolist (spec specs values)
+      (unless (plist-has-key-p values (option-key spec))
+        (let ((trigger (find-if (lambda (target)
+                                  (%relation-target-present-p values spec-by-target target))
+                                (option-required-if spec))))
+          (when trigger
+            (signal-cli-error
+             'cli-missing-option-value
+             (format nil "Option ~A is required when ~A is supplied."
+                     (public-option-display-name spec)
+                     (public-option-display-name
+                      (%lookup-option-target spec-by-target trigger)))
+             :option (option-key spec))))
+        (when (and (option-required-unless spec)
+                   (notany (lambda (target)
+                             (%relation-target-present-p values spec-by-target target))
+                           (option-required-unless spec)))
           (signal-cli-error
            'cli-missing-option-value
-           (format nil "Option ~A is required when ~A is supplied."
+           (format nil "Option ~A is required unless one of ~{~A~^, ~} is supplied."
                    (public-option-display-name spec)
-                   (public-option-display-name (resolve-related-option-spec specs trigger)))
-           :option (option-key spec))))
-      (when (and (option-required-unless spec)
-                 (notany (lambda (target)
-                           (%relation-target-present-p values specs target))
-                         (option-required-unless spec)))
-        (signal-cli-error
-         'cli-missing-option-value
-         (format nil "Option ~A is required unless one of ~{~A~^, ~} is supplied."
-                 (public-option-display-name spec)
-                 (mapcar (lambda (target)
-                           (public-option-display-name
-                            (resolve-related-option-spec specs target)))
-                         (option-required-unless spec)))
-         :option (option-key spec))))))
+                   (mapcar (lambda (target)
+                             (public-option-display-name
+                              (%lookup-option-target spec-by-target target)))
+                           (option-required-unless spec)))
+           :option (option-key spec)))))))
 
 (defun option-table-from-specs (specs)
   (let ((table (make-hash-table :test 'equal)))
@@ -254,10 +257,25 @@ generically in the error, mirroring the other relationship diagnostics."
 Bound by PARSE-ARGV from the app's :allow-abbreviated-options flag so the parser
 stays strict by default; see MAKE-APP.")
 
+(defvar *abbreviated-option-entry-cache* nil
+  "Per-parse cache for abbreviated long option resolution, keyed by option table.")
+
 (defun resolve-option-entry (table name)
   (gethash (canonical-option-name name) table))
 
-(defun %abbreviated-long-option-entry (name table)
+(defun option-entry-spec (entry)
+  (getf entry :spec))
+
+(defun option-entry-negated-p (entry)
+  (getf entry :negated-p))
+
+(defun %same-option-entry-resolution-p (left right)
+  (and (eq (option-key (option-entry-spec left))
+           (option-key (option-entry-spec right)))
+       (eq (option-entry-negated-p left)
+           (option-entry-negated-p right))))
+
+(defun %resolve-abbreviated-long-option-entry-uncached (canonical-name table)
   "Resolve NAME as a unique long-option prefix in TABLE, or signal / return NIL.
 
 Collects every long (multi-character) table key that has NAME as a prefix,
@@ -268,14 +286,9 @@ no match returns NIL so the caller can report an unknown option."
     (maphash
      (lambda (key entry)
        (when (and (> (length key) 1)
-                  (<= (length name) (length key))
-                  (string= name key :end2 (length name)))
-         (pushnew entry results
-                  :test (lambda (a b)
-                          (and (eq (option-key (option-entry-spec a))
-                                   (option-key (option-entry-spec b)))
-                               (eq (option-entry-negated-p a)
-                                   (option-entry-negated-p b)))))))
+                  (<= (length canonical-name) (length key))
+                  (string= canonical-name key :end2 (length canonical-name)))
+         (pushnew entry results :test #'%same-option-entry-resolution-p)))
      table)
     (cond
       ((null results) nil)
@@ -284,10 +297,29 @@ no match returns NIL so the caller can report an unknown option."
        (signal-cli-error
         'cli-unknown-option
         (format nil "Ambiguous option --~A matches: ~{--~A~^, ~}"
-                name
+                canonical-name
                 (sort (mapcar (lambda (entry) (getf entry :name)) results)
                       #'string<))
-        :option name)))))
+        :option canonical-name)))))
+
+(defun %abbreviated-option-cache-for-table (table)
+  (when *abbreviated-option-entry-cache*
+    (or (gethash table *abbreviated-option-entry-cache*)
+        (setf (gethash table *abbreviated-option-entry-cache*)
+              (make-hash-table :test #'equal)))))
+
+(defun %abbreviated-long-option-entry (name table)
+  (let* ((canonical-name (canonical-option-name name))
+         (cache (%abbreviated-option-cache-for-table table)))
+    (if cache
+        (multiple-value-bind (entry present-p)
+            (gethash canonical-name cache)
+          (if present-p
+              entry
+              (setf (gethash canonical-name cache)
+                    (%resolve-abbreviated-long-option-entry-uncached canonical-name
+                                                                      table))))
+        (%resolve-abbreviated-long-option-entry-uncached canonical-name table))))
 
 (defun resolve-long-option-entry (name table specs)
   (or (resolve-option-entry table name)
@@ -298,12 +330,6 @@ no match returns NIL so the caller can report an unknown option."
                                                 (option-candidate-names specs
                                                                         :long-only-p t))
                         :option name)))
-
-(defun option-entry-spec (entry)
-  (getf entry :spec))
-
-(defun option-entry-negated-p (entry)
-  (getf entry :negated-p))
 
 (defun resolve-command-spec (table name)
   (gethash (canonical-name name) table))

@@ -96,6 +96,7 @@
   require-command
   (auto-help t)
   global-relation-rulebase
+  dynamic-completion-index
   ;; A COMMAND-SPEC is an explicitly reusable, composable object (README:
   ;; "reusable app, command, option, and positional specs") -- the same
   ;; instance can be spliced into :COMMANDS for more than one MAKE-APP call.
@@ -125,13 +126,23 @@
 (defun %option-display-name (spec)
   (option-token-display-name (first (option-names spec))))
 
+(defun %option-key-table (specs)
+  (let ((table (make-hash-table :test #'eq)))
+    (dolist (spec specs table)
+      (setf (gethash (option-key spec) table) spec))))
+
+(defun %option-target-table (specs)
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (spec specs table)
+      (setf (gethash (option-key spec) table) spec)
+      (dolist (name (option-names spec))
+        (setf (gethash name table) spec)))))
+
+(defun %lookup-option-target (table target)
+  (gethash target table))
+
 (defun resolve-related-option-spec (specs target)
-  (or (when (keywordp target)
-        (find target specs :key #'option-key :test #'eq))
-      (when (stringp target)
-        (find-if (lambda (spec)
-                   (member target (option-names spec) :test #'string=))
-                 specs))))
+  (%lookup-option-target (%option-target-table specs) target))
 
 (defun %validate-related-option-target (specs spec target relation)
   (let ((resolved (resolve-related-option-spec specs target)))
@@ -308,7 +319,8 @@ more), which greedily consume following tokens up to the next option-like token.
            (default-present-p (or default-supplied-p count-default-p)))
       (declare (ignore %typed-value-check))
       (when resolved-value-name
-        (validate-non-empty-strings (list resolved-value-name) "Option value names"))
+        (validate-non-empty-strings (list resolved-value-name) "Option value names")
+        (validate-no-control-characters (list resolved-value-name) "Option value names"))
       (when (and complete (not (functionp complete)))
         (signal-cli-error 'cli-invalid-specification
                           (format nil "Option ~A: :complete must be a function."

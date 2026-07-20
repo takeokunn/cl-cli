@@ -155,6 +155,25 @@
                           '("tool"))
       (expect (= (positional-value inv :port) 8080))))
 
+  (it "validates choices for string positional defaults"
+    (signals cli-invalid-positional-value
+      (parse-argv (make-app
+                   :name "tool"
+                   :positionals (list (make-positional :key :mode
+                                                       :choices '("dev" "prod")
+                                                       :default "staging")))
+                  '("tool"))))
+
+  (it "uses parser for scalar rest positional defaults"
+    (with-parsed-argv (inv (make-app
+                            :name "tool"
+                            :positionals (list (make-positional :key :ports
+                                                                :rest-p t
+                                                                :default "8080"
+                                                                :parser #'parse-integer)))
+                          '("tool"))
+      (expect (equal (positional-value inv :ports) '(8080)))))
+
   (it "dispatches default command without command token"
     (with-parsed-argv (inv (make-app :name "tool"
                                      :commands (list (make-command

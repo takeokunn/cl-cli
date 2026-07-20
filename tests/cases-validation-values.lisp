@@ -47,6 +47,14 @@
                              '("demo"))
         (expect (= (option-value inv :count) 42)))))
 
+  (it "validates choices for string defaults"
+    (let ((mode (value-option "mode"
+                              :choices '("dev" "prod")
+                              :default "staging")))
+      (signals cli-invalid-option-value
+        (parse-argv (make-app :name "demo" :global-options (list mode))
+                    '("demo")))))
+
   (it "uses the option parser for repeated string defaults"
     (let ((ports (value-option "port"
                                :multiple-p t

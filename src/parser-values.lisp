@@ -12,6 +12,9 @@ from this map necessarily came from the command line, which is how
 OPTION-VALUE-SOURCE derives :COMMAND-LINE without threading state through the
 whole parser.")
 
+(defvar *option-value-tail-cells* nil
+  "Per-parse cache of tail cons cells for accumulating option values.")
+
 (defun %record-option-source (spec source)
   "Note that SPEC's value was supplied by SOURCE (:env / :config / :default)."
   (setf (getf *option-value-sources* (option-key spec)) source))
@@ -44,12 +47,37 @@ from a legitimate config value of NIL (or any keyword).")
       (option-key spec)
       (positional-spec-key spec)))
 
+(defun %remember-option-value-tail (key list)
+  (when (and *option-value-tail-cells* list)
+    (setf (gethash key *option-value-tail-cells*) (last list))))
+
+(defun %append-accumulating-option-value (values key value)
+  (let ((cell (list value)))
+    (cond
+      ((not (plist-has-key-p values key))
+       (setf (getf values key) cell)
+       (%remember-option-value-tail key cell))
+      (*option-value-tail-cells*
+       (let* ((current (getf values key))
+              (tail (or (gethash key *option-value-tail-cells*)
+                        (when current
+                          (setf (gethash key *option-value-tail-cells*)
+                                (last current))))))
+         (if tail
+             (setf (cdr tail) cell
+                   (gethash key *option-value-tail-cells*) cell)
+             (progn
+               (setf (getf values key) cell)
+               (%remember-option-value-tail key cell)))))
+      (t
+       (setf (getf values key) (append (getf values key) cell)))))
+  values)
+
 (defun store-option-value (values spec value)
   (let ((key (option->plist-key spec)))
     (if (and (typep spec 'option-spec)
              (option-multiple-p spec))
-        (let ((current (getf values key)))
-          (setf (getf values key) (append current (list value))))
+        (setf values (%append-accumulating-option-value values key value))
         (setf (getf values key) value)))
   values)
 
@@ -60,9 +88,14 @@ from a legitimate config value of NIL (or any keyword).")
           do (return (values raw-value t))
         finally (return (values nil nil))))
 
-(defun coerce-default-value (raw-value parser)
+(defun coerce-option-default-value (spec raw-value)
   (if (stringp raw-value)
-      (funcall parser raw-value)
+      (parse-option-value spec raw-value)
+      raw-value))
+
+(defun coerce-positional-default-value (spec raw-value)
+  (if (stringp raw-value)
+      (parse-positional-value spec raw-value)
       raw-value))
 
 (defun validate-option-choice (spec raw-value)
@@ -146,8 +179,7 @@ through unchanged."
 Used by delimited options, whose value is always a list: one occurrence such as
 `--tags a,b` appends every split piece, and a later occurrence keeps appending."
   (let ((key (option->plist-key spec)))
-    (setf (getf values key) (append (getf values key) (list value))))
-  values)
+    (%append-accumulating-option-value values key value)))
 
 (defun store-delimited-option-value (values spec raw-value)
   "Split RAW-VALUE on SPEC's delimiter, parse each piece, and append them all."
@@ -226,7 +258,7 @@ option accumulates too; otherwise the single value is stored directly. This is
 shared by both literal :default and :config resolution so they behave alike."
   (let ((append-p (%option-delimited-p spec)))
     (dolist (piece (%resolved-default-pieces spec raw) values)
-      (let ((coerced (coerce-default-value piece (option-parser spec))))
+      (let ((coerced (coerce-option-default-value spec piece)))
         (setf values (if append-p
                          (%append-option-value values spec coerced)
                          (store-option-value values spec coerced)))))))

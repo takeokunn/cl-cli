@@ -87,6 +87,15 @@
                    :kind :value
                    :value-name "")))
 
+  (it "rejects control characters in option value names"
+    (signals-invalid-specification
+      (make-option :name "output"
+                   :kind :value
+                   :value-name (format nil "FI~ALE" #\Tab))
+      (make-option :name "output"
+                   :kind :value
+                   :value-name (format nil "FI~ALE" (code-char 27)))))
+
   (it "requires non-empty option env vars"
     (signals-invalid-specification
       (make-option :name "profile"

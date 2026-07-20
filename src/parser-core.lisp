@@ -19,12 +19,14 @@
                 (parse-positional-value spec value))
               tokens)
       (let ((default (positional-spec-default spec)))
-        (if (listp default)
-            (mapcar (lambda (value)
-                      (coerce-default-value value
-                                            (positional-spec-parser spec)))
-                    default)
-            default))))
+        (cond
+          ((null default) nil)
+          ((listp default)
+           (mapcar (lambda (value)
+                     (coerce-positional-default-value spec value))
+                   default))
+          (t
+           (list (coerce-positional-default-value spec default)))))))
 
 (defun %validate-rest-arity (spec token-count)
   "Enforce a rest positional's :min-count / :max-count against TOKEN-COUNT."
@@ -61,9 +63,9 @@
          (signal-missing-positional spec)
          (when (positional-spec-default-present-p spec)
            (setf values (store-option-value values spec
-                                            (coerce-default-value
-                                             (positional-spec-default spec)
-                                             (positional-spec-parser spec))))))
+                                            (coerce-positional-default-value
+                                             spec
+                                             (positional-spec-default spec))))))
      (values values nil))
     (t
      (setf values (store-option-value values spec

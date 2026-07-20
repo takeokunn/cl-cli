@@ -24,22 +24,23 @@
                              (:conflicts ?left ?right))))))
 
 (defun make-option-relation-rulebase (specs)
-  (let ((rulebase (cl-prolog:copy-rulebase *option-relation-rules*)))
+  (let ((rulebase (cl-prolog:copy-rulebase *option-relation-rules*))
+        (spec-by-target (%option-target-table specs)))
     (dolist (spec specs rulebase)
       (dolist (target (option-requires spec))
-        (let ((dependency (resolve-related-option-spec specs target)))
+        (let ((dependency (%lookup-option-target spec-by-target target)))
           (cl-prolog:rulebase-insert-clause!
            rulebase
            (cl-prolog:make-clause
             (list :requires (option-key spec) (option-key dependency))))))
       (dolist (target (option-requires-any-of spec))
-        (let ((alternative (resolve-related-option-spec specs target)))
+        (let ((alternative (%lookup-option-target spec-by-target target)))
           (cl-prolog:rulebase-insert-clause!
            rulebase
            (cl-prolog:make-clause
             (list :requires-any (option-key spec) (option-key alternative))))))
       (dolist (target (option-conflicts-with spec))
-        (let ((other (resolve-related-option-spec specs target)))
+        (let ((other (%lookup-option-target spec-by-target target)))
           (cl-prolog:rulebase-insert-clause!
            rulebase
            (cl-prolog:make-clause
@@ -51,7 +52,8 @@
 
 (defun option-requirement-cycle-p (specs)
   (let ((visiting (make-hash-table :test #'equal))
-        (visited (make-hash-table :test #'equal)))
+        (visited (make-hash-table :test #'equal))
+        (spec-by-target (%option-target-table specs)))
     (labels ((visit (spec)
                (let ((key (option-key spec)))
                  (cond
@@ -59,15 +61,15 @@
                    ((gethash key visited) nil)
                    (t
                     (setf (gethash key visiting) t)
-                    (prog1
-                        (some (lambda (target)
-                                (visit (resolve-related-option-spec specs target)))
-                              (option-requires spec))
+                     (prog1
+                         (some (lambda (target)
+                                 (visit (%lookup-option-target spec-by-target target)))
+                               (option-requires spec))
                       (remhash key visiting)
                       (setf (gethash key visited) t)))))))
       (some #'visit specs))))
 
-(defun %requires-any-of-unsatisfiable-p (spec specs rulebase)
+(defun %requires-any-of-unsatisfiable-p (spec spec-by-target rulebase)
   "True when every one of SPEC's :REQUIRES-ANY-OF alternatives conflicts with it.
 
 If so, SPEC could never be validly supplied: alone it fails the any-of
@@ -75,10 +77,10 @@ requirement, and paired with any alternative it fails a :conflicts check."
   (let ((alternatives (option-requires-any-of spec)))
     (and alternatives
          (every (lambda (target)
-                  (let ((other (resolve-related-option-spec specs target)))
-                    (cl-prolog:prolog-succeeds-p
-                     rulebase
-                     (list :conflicts (option-key spec) (option-key other)))))
+                   (let ((other (%lookup-option-target spec-by-target target)))
+                     (cl-prolog:prolog-succeeds-p
+                      rulebase
+                      (list :conflicts (option-key spec) (option-key other)))))
                 alternatives))))
 
 (defun validate-option-relation-graph (specs)
@@ -91,14 +93,15 @@ equivalent rulebase from scratch on every PARSE-ARGV call."
   (when (option-requirement-cycle-p specs)
     (signal-cli-error 'cli-invalid-specification
                       "Option requirements must not contain a cycle."))
-  (let ((rulebase (make-option-relation-rulebase specs)))
+  (let ((rulebase (make-option-relation-rulebase specs))
+        (spec-by-target (%option-target-table specs)))
     (when (cl-prolog:prolog-succeeds-p
            rulebase '(:invalid-closure ?root ?left ?right))
       (signal-cli-error
        'cli-invalid-specification
        "An option requirement closure contains conflicting options."))
     (dolist (spec specs)
-      (when (%requires-any-of-unsatisfiable-p spec specs rulebase)
+      (when (%requires-any-of-unsatisfiable-p spec spec-by-target rulebase)
         (signal-cli-error
          'cli-invalid-specification
          (format nil "Option ~A's :requires-any-of alternatives all conflict with it, so it could never be satisfied."
