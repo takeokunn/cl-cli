@@ -21,6 +21,30 @@ provided and has no environment or literal default."
         default
         value)))
 
+(defun %invocation-has-option-key-p (invocation key)
+  "True when INVOCATION carries any value for KEY (command scope or global)."
+  (or (plist-has-key-p (invocation-command-options invocation) key)
+      (plist-has-key-p (invocation-global-options invocation) key)))
+
+(defun option-value-source (invocation key)
+  "Return where INVOCATION's value for KEY came from, or NIL when KEY is unset.
+
+The result is one of:
+  :COMMAND-LINE -- the user passed it on the argv,
+  :ENV          -- filled from one of the option's environment variables,
+  :CONFIG       -- filled from the :CONFIG layer (see PARSE-ARGV),
+  :DEFAULT      -- filled from the option's literal :DEFAULT.
+
+This is the analogue of clap's `ArgMatches::value_source`: it lets a handler
+tell an explicit user choice apart from a fallback, so \"only override when the
+user actually set it\" and layered-config merges become expressible. Command
+scope shadows global scope, matching OPTION-VALUE."
+  (let ((sources (invocation-option-sources invocation)))
+    (if (plist-has-key-p sources key)
+        (getf sources key)
+        (when (%invocation-has-option-key-p invocation key)
+          :command-line))))
+
 (defun cli-command-handler (invocation)
   (let ((command (invocation-command invocation)))
     (if command
@@ -97,6 +121,12 @@ literal separator token used to terminate CLI option parsing."
         unless (string= token separator)
           collect token))
 
+(defun %warn-deprecated-command (command stream)
+  "Print a stderr deprecation warning for a dispatched deprecated COMMAND."
+  (format stream "~&warning: command '~A' is ~A~%"
+          (command-name command)
+          (or (%deprecation-note (command-deprecated command)) "deprecated")))
+
 (defun print-app-version-line (app stream)
   (let ((version (app-version-string app)))
     (if version
@@ -104,25 +134,48 @@ literal separator token used to terminate CLI option parsing."
         (format stream "~A~%" (app-name app)))))
 
 (defun run-app (app &key argv (argv0 (first argv)) (stdout *standard-output*)
-                  (stderr *error-output*))
-  "Parse ARGV, dispatch the selected handler, and return an exit code."
+                  (stderr *error-output*) config color width
+                  (usage-exit-code 64) (error-exit-code 70))
+  "Parse ARGV, dispatch the selected handler, and return an exit code.
+
+CONFIG is forwarded to PARSE-ARGV as the option-default config layer (see
+PARSE-ARGV / *OPTION-CONFIG-VALUES*). COLOR and WIDTH govern help printed by
+RUN-APP (for --help and for usage errors) and each accepts :AUTO in addition to
+explicit values: COLOR :AUTO honors NO_COLOR / CLICOLOR_FORCE / whether the
+target stream is a terminal, and WIDTH :AUTO reads $COLUMNS. They default to NIL
+(no styling, no wrapping) so behavior is unchanged unless a caller opts in.
+
+A successful run returns 0 (or the integer a handler returns). USAGE-EXIT-CODE
+is returned for a CLI-USAGE-ERROR and ERROR-EXIT-CODE for any other unhandled
+error; they default to the BSD sysexits values EX_USAGE (64) and EX_SOFTWARE
+(70) but a caller can override either to match a different exit-code policy."
   (handler-case
-      (let ((invocation (parse-argv app argv :argv0 argv0)))
+      (let ((invocation (parse-argv app argv :argv0 argv0 :config config)))
         (setf (invocation-stdout invocation) stdout
               (invocation-stderr invocation) stderr)
         (ecase (invocation-action invocation)
           (:help
            (if (invocation-command invocation)
-               (print-command-help app (invocation-command invocation) stdout)
-               (print-app-help app stdout)))
+               (print-command-help app (invocation-command invocation) stdout
+                                   (invocation-command-path invocation) :color color :width width)
+               (print-app-help app stdout :color color :width width)))
           (:version (print-app-version-line app stdout))
           (:dispatch
+           (dolist (command (invocation-command-path invocation))
+             (when (command-deprecated command)
+               (%warn-deprecated-command command stderr)))
            (let ((handler (cli-command-handler invocation)))
              (if handler
                  (let ((result (funcall handler invocation)))
                    (when (integerp result)
                      (return-from run-app result)))
-                 (print-app-help app stdout)))))
+                 ;; No handler: a command node (e.g. a pure subcommand group with
+                 ;; no default action) shows its own help listing subcommands;
+                 ;; the app root falls back to app help.
+                 (if (invocation-command invocation)
+                     (print-command-help app (invocation-command invocation) stdout
+                                         (invocation-command-path invocation) :color color :width width)
+                     (print-app-help app stdout :color color :width width))))))
         0)
     (cli-usage-error (condition)
       (format stderr "~&~A~%" condition)
@@ -132,11 +185,14 @@ literal separator token used to terminate CLI option parsing."
          (format stderr "~&")
          (print-command-help (cli-usage-error-app condition)
                              (cli-usage-error-command condition)
-                             stderr))
+                             stderr
+                             (list (cli-usage-error-command condition))
+                             :color color :width width))
         ((or (cli-usage-error-app condition) app)
         (format stderr "~&")
-         (print-app-help (or (cli-usage-error-app condition) app) stderr)))
-      64)
+         (print-app-help (or (cli-usage-error-app condition) app) stderr
+                         :color color :width width)))
+      usage-exit-code)
     (error (condition)
       (format stderr "~&Internal error: ~A~%" condition)
-      70)))
+      error-exit-code)))
