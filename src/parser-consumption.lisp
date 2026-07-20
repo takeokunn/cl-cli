@@ -1,9 +1,9 @@
 (in-package :cl-cli)
 
-(defun parse-options-prefix (app tokens option-specs)
+(defun parse-options-prefix (app tokens option-specs &optional initial-values)
   (multiple-value-bind (validated-specs table)
       (prepare-option-parser-state app option-specs)
-    (let ((values nil)
+    (let ((values initial-values)
           (remaining tokens)
           (action :dispatch)
           (literal-separator-seen-p nil))
@@ -38,8 +38,7 @@
         (scan)))))
 
 (defun parse-mixed-arguments (app tokens option-specs positional-specs
-                               &optional initial-option-values
-                               &key command)
+                               &key initial-option-values command)
   (multiple-value-bind (validated-specs table)
       (prepare-option-parser-state app option-specs)
     (let* ((option-values initial-option-values)
@@ -97,5 +96,7 @@
          (if command
              (gethash command (app-command-relation-rulebases app))
              (app-global-relation-rulebase app)))
-        (validate-required-option-groups option-values validated-specs))
+        (validate-required-option-groups option-values validated-specs)
+        (validate-inclusive-groups option-values validated-specs)
+        (validate-conditional-requirements option-values validated-specs))
       (values option-values positional-values action))))

@@ -56,6 +56,27 @@
        (>= (length token) 2)
        (char= (char token 1) #\-)))
 
+(defvar *allow-negative-numbers* nil
+  "When true, a negative-number token is not treated as a short option.
+
+Bound by PARSE-ARGV from the app's :allow-negative-numbers flag so tokens such
+as -5 or -1.5 can serve as positionals or option values instead of being parsed
+as an option cluster; see MAKE-APP.")
+
+(defun %negative-number-token-p (token)
+  "True when TOKEN looks like a negative number (-5, -1.5, -.5) not an option.
+
+A deliberately light heuristic -- a leading `-` followed by a digit, or by a dot
+and a digit -- is enough to disambiguate an option from a number; downstream
+value parsing still validates the token fully."
+  (and (>= (length token) 2)
+       (char= (char token 0) #\-)
+       (let ((second (char token 1)))
+         (or (digit-char-p second)
+             (and (char= second #\.)
+                  (>= (length token) 3)
+                  (digit-char-p (char token 2)))))))
+
 (defun short-option-token-p (token)
   (and (command-line-option-p token)
        ;; A bare "-" is the stdin/stdout idiom, not an option. Guard the length
@@ -63,6 +84,8 @@
        ;; uncaught SB-INT:INVALID-ARRAY-INDEX-ERROR that callers catching
        ;; CLI-USAGE-ERROR could not handle. Mirrors LONG-OPTION-TOKEN-P's guard.
        (> (length token) 1)
+       ;; With :allow-negative-numbers a token like -5 is a value, not an option.
+       (not (and *allow-negative-numbers* (%negative-number-token-p token)))
        (or (= (length token) 2)
            (not (char= (char token 1) #\-)))))
 
