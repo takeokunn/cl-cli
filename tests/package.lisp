@@ -14,6 +14,7 @@
                 :gen-string
                 :it
                 :it-property
+                :it-run-if
                 :run-all
                 :signals)
   (:export :run-tests))

@@ -1,18 +1,53 @@
 (in-package :cl-cli)
 
+(defun %completion-dynamic-option-alist (app)
+  "Alist of (option-token . key-name) for every visible dynamic option in APP.
+
+Covers global options and the options of every command (including nested
+subcommands), so a flat completer -- powershell, nushell, elvish -- can shell
+out to `app __complete KEY` when the word before the cursor is a dynamic option.
+A token that appears on two options resolves to whichever comes first, the same
+single-pool ambiguity the flat completers already accept for their candidate
+lists. KEY-NAME is the downcased option key, matching RENDER-COMPLETE-REPLY."
+  (labels ((walk (commands)
+             (loop for command in commands
+                   append (cons command (walk (command-subcommands command))))))
+    (let ((specs (append (app-global-options app)
+                         (loop for command in (walk (app-commands app))
+                               append (command-options command))))
+          (alist nil))
+      (dolist (option specs (nreverse alist))
+        (when (and (option-complete option)
+                   (not (option-hidden-p option)))
+          (let ((key (string-downcase (symbol-name (option-key option)))))
+            (dolist (name (%completion-recognized-option-names option))
+              (push (cons (option-token-display-name name) key) alist))))))))
+
 (defun %completion-zsh-option-value-case-body (options &key attached-p)
   (with-output-to-string (out)
     (dolist (option options)
       (unless (option-hidden-p option)
-        (let ((candidates (%completion-option-candidates option)))
-          (when candidates
-            (let ((labels (%completion-option-value-patterns option
-                                                             :attached-p attached-p)))
-              (format out "      ~A)~%" (%completion-case-labels labels))
-              (write-string (%completion-zsh-option-candidate-body candidates)
-                           out)
-              (format out "        return 0~%")
-              (format out "        ;;~%"))))))))
+        (let ((candidates (%completion-option-candidates option))
+              (hint (option-value-hint option))
+              (dynamic-p (and (option-complete option) t)))
+          (when (or candidates (member hint '(:file :dir)) dynamic-p)
+            (format out "      ~A)~%"
+                    (%completion-case-labels
+                     (%completion-option-token-patterns option :attached-p attached-p)))
+            (cond
+              (candidates
+               (write-string (%completion-zsh-option-candidate-body candidates) out))
+              (dynamic-p
+               ;; Split the program's runtime completion output on newlines;
+               ;; cut -f1 drops any tab-separated description column.
+               (format out "        compadd -- ${(f)\"$(${words[1]} __complete ~A ${current_word} | cut -f1)\"}~%"
+                       (string-downcase (symbol-name (option-key option)))))
+              ((eq hint :dir)
+               (format out "        _files -/~%"))
+              ((eq hint :file)
+               (format out "        _files~%")))
+            (format out "        return 0~%")
+            (format out "        ;;~%")))))))
 
 (defun %completion-zsh-value-case-body (options)
   (%completion-zsh-option-value-case-body options :attached-p nil))
@@ -57,7 +92,7 @@
             (or (option-description option)
                 token)
             (case kind
-              (:value
+              ((:value :key-value)
                (format nil ":~A:"
                        (%completion-zsh-option-placeholder option)))
               (:optional-value
@@ -118,9 +153,14 @@
       (format out " -n ~A"
               (%completion-shell-quote condition)))
     (let ((kind (option-kind option)))
-      (when (member kind '(:value :optional-value))
-        (format out " -r"))
-      (when (member kind '(:flag :boolean))
+      (when (member kind '(:value :optional-value :key-value))
+        (format out " -r")
+        ;; An option with an explicit candidate set completes only those values;
+        ;; add -f so fish does not also fall back to file completion (a file path
+        ;; is not one of the allowed values).
+        (when (%completion-option-candidates option)
+          (format out " -f")))
+      (when (member kind '(:flag :boolean :count))
         (format out " -f")))
     (when (option-description option)
       (format out " -d ~A"
@@ -136,13 +176,32 @@
                   (%completion-shell-quote (car candidate))
                   (and (cdr candidate)
                        (%completion-shell-quote (cdr candidate)))))
-        (format stream "complete -c ~A~A~@[ -a ~A~]~%"
-                (%completion-shell-quote (app-name app))
-                arguments
-                (and candidates
-                     (%completion-shell-quote
-                      (%completion-space-joined
-                      (%completion-option-candidate-values option))))))))
+        (cond
+          (candidates
+           (format stream "complete -c ~A~A -a ~A~%"
+                   (%completion-shell-quote (app-name app))
+                   arguments
+                   (%completion-shell-quote
+                    (%completion-space-joined
+                     (%completion-option-candidate-values option)))))
+          ;; A :complete function is queried at runtime: fish passes the current
+          ;; token to `app __complete KEY ...` and offers the lines it prints.
+          ((option-complete option)
+           (format stream "complete -c ~A~A -f -a '(~A __complete ~A (commandline -ct))'~%"
+                   (%completion-shell-quote (app-name app))
+                   arguments
+                   (app-name app)
+                   (string-downcase (symbol-name (option-key option)))))
+          ;; A :dir hint completes directories only (-f suppresses fish's default
+          ;; file fallback); a :file hint / plain value option keeps that default.
+          ((eq (option-value-hint option) :dir)
+           (format stream "complete -c ~A~A -f -a '(__fish_complete_directories)'~%"
+                   (%completion-shell-quote (app-name app))
+                   arguments))
+          (t
+           (format stream "complete -c ~A~A~%"
+                   (%completion-shell-quote (app-name app))
+                   arguments))))))
 
 (defun %render-fish-option-lines (app options condition stream)
   (dolist (option options)

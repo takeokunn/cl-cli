@@ -10,19 +10,32 @@
          "#!/usr/bin/env bash"
          "# bash completion for demo"
          "_demo_completion() {"
-         "complete -F _demo_completion 'demo'")
+         "complete -o default -F _demo_completion 'demo'")
         ("zsh"
          "#compdef demo"
          "_demo_completion() {"
          "compdef _demo_completion demo")
         ("fish"
-         "complete -c 'demo' -f"))))
+         "complete -c 'demo' -f")
+        ("powershell"
+         "# PowerShell completion for demo"
+         "Register-ArgumentCompleter -Native -CommandName 'demo'")
+        ("pwsh"
+         "# PowerShell completion for demo")
+        ("nushell"
+         "# Nushell completion for demo"
+         "export extern \"demo\" [")
+        ("nu"
+         "# Nushell completion for demo")
+        ("elvish"
+         "# Elvish completion for demo"
+         "set edit:completion:arg-completer['demo'] ="))))
 
   (it "rejects unsupported shells"
     (let ((app (make-app :name "demo"
                          :commands (list (make-completion-command)))))
       (signals cli-invalid-positional-value
-        (parse-argv app '("demo" "completion" "pwsh")))))
+        (parse-argv app '("demo" "completion" "tcsh")))))
 
   (it "standard commands default to help and version"
     (let ((commands (make-standard-commands)))
@@ -72,7 +85,85 @@
 
   (it "render-completion rejects unsupported shells"
     (signals cli-invalid-positional-value
-      (render-completion (make-app :name "demo") "pwsh")))
+      (render-completion (make-app :name "demo") "tcsh")))
+
+  (it "renders a PowerShell native argument completer"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (make-option :name "verbose"
+                                                             :short #\v
+                                                             :kind :count))
+                          :commands (list (make-command
+                                           :name "compile"
+                                           :aliases '("build")
+                                           :options (list (make-option :name "output"
+                                                                       :short #\o
+                                                                       :kind :value))))))
+           (text (render-powershell-completion app)))
+      (assert-searches text
+                       "Register-ArgumentCompleter -Native -CommandName 'demo'"
+                       "$commands = @('compile', 'build')"
+                       "'--verbose'"
+                       "$commandOptions = @{"
+                       "'compile' = @('--output', '-o')"
+                       "'build' = @('--output', '-o')"
+                       "CompletionResult")))
+
+  (it "omits hidden entities from the PowerShell completer"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (flag-option "secret" :hidden-p t))
+                          :commands (list (make-command :name "ghost" :hidden-p t))))
+           (text (render-powershell-completion app)))
+      (assert-not-searches text "secret" "ghost")))
+
+  (it "renders a Nushell extern with commands and global flags"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (make-option :name "verbose"
+                                                             :short #\v
+                                                             :kind :flag
+                                                             :description "Be loud.")
+                                                (make-option :name "output"
+                                                             :short #\o
+                                                             :kind :value))
+                          :commands (list (make-command :name "compile")
+                                          (make-command :name "test"))))
+           (text (render-nushell-completion app)))
+      (assert-searches text
+                       "def \"nu-complete demo command\" []"
+                       "\"compile\", \"test\""
+                       "export extern \"demo\" ["
+                       "command?: string@\"nu-complete demo command\""
+                       "--verbose(-v)  # Be loud."
+                       "--output(-o): string"
+                       "--help(-h)")))
+
+  (it "omits hidden entities from the Nushell completer"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (flag-option "secret" :hidden-p t))
+                          :commands (list (make-command :name "ghost" :hidden-p t))))
+           (text (render-nushell-completion app)))
+      (assert-not-searches text "secret" "ghost")))
+
+  (it "renders an Elvish arg-completer with commands and options"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (make-option :name "verbose"
+                                                             :short #\v
+                                                             :kind :flag))
+                          :commands (list (make-command :name "compile")
+                                          (make-command :name "test"))))
+           (text (render-elvish-completion app)))
+      (assert-searches text
+                       "set edit:completion:arg-completer['demo'] = {|@words|"
+                       "var commands = ['compile' 'test']"
+                       "'--verbose'"
+                       "put $@commands"
+                       "put $@options")))
+
+  (it "omits hidden entities from the Elvish completer"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (flag-option "secret" :hidden-p t))
+                          :commands (list (make-command :name "ghost" :hidden-p t))))
+           (text (render-elvish-completion app)))
+      (assert-not-searches text "secret" "ghost")))
 
   (it "renderers return the script as a string when no stream is given"
     (let ((app (make-app :name "demo"
@@ -81,7 +172,7 @@
       ;; With no stream, each renderer returns exactly what the stream form
       ;; writes, so the documented `(write-string (render-completion ...))`
       ;; pattern works instead of returning no values.
-      (dolist (shell '("bash" "zsh" "fish"))
+      (dolist (shell '("bash" "zsh" "fish" "powershell" "nushell" "elvish"))
         (let ((returned (render-completion app shell))
               (written (with-string-output (out) (render-completion app shell out))))
           (expect (stringp returned))
@@ -92,4 +183,10 @@
       (expect (string= (render-zsh-completion app)
                        (with-string-output (out) (render-zsh-completion app out))))
       (expect (string= (render-fish-completion app)
-                       (with-string-output (out) (render-fish-completion app out)))))))
+                       (with-string-output (out) (render-fish-completion app out))))
+      (expect (string= (render-powershell-completion app)
+                       (with-string-output (out) (render-powershell-completion app out))))
+      (expect (string= (render-nushell-completion app)
+                       (with-string-output (out) (render-nushell-completion app out))))
+      (expect (string= (render-elvish-completion app)
+                       (with-string-output (out) (render-elvish-completion app out)))))))

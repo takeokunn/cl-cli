@@ -16,10 +16,6 @@
                      #\_))
                (app-name app))))
 
-(defun %completion-fish-command-condition (command)
-  (format nil "__fish_seen_subcommand_from ~{~A~^ ~}"
-          (%completion-command-names command)))
-
 (defun %completion-option-items-for-specs (options names-fn item-fn)
   (loop for option in options append
         (loop for name in (funcall names-fn option)
@@ -90,24 +86,57 @@
 (defun %completion-option-candidate-values (option)
   (mapcar #'car (%completion-option-candidates option)))
 
+(defun %completion-positional-candidates (positional)
+  (or (positional-spec-completion-candidates positional)
+      (mapcar (lambda (choice) (cons choice nil))
+              (positional-spec-choices positional))))
+
+(defun %completion-positional-candidate-values (positional)
+  (mapcar #'car (%completion-positional-candidates positional)))
+
+(defun %completion-app-positional-values (app)
+  (loop for positional in (app-positionals app)
+        append (%completion-positional-candidate-values positional)))
+
+(defun %completion-command-positional-values (command)
+  (loop for positional in (command-positionals command)
+        append (%completion-positional-candidate-values positional)))
+
+(defun %completion-positionals-hint-p (positionals hint)
+  "True when any positional in POSITIONALS declares :value-hint HINT."
+  (some (lambda (positional) (eq (positional-spec-value-hint positional) hint))
+        positionals))
+
+(defun %completion-app-positional-hint-p (app hint)
+  (%completion-positionals-hint-p (app-positionals app) hint))
+
+(defun %completion-command-positional-hint-p (command hint)
+  (%completion-positionals-hint-p (command-positionals command) hint))
+
 (defun %completion-option-value-source (option)
   (let ((values (%completion-option-candidate-values option)))
     (and values
          (%completion-shell-quote
           (%completion-space-joined values)))))
 
+(defun %completion-option-token-patterns (option &key command-name attached-p)
+  "Case-label patterns matching OPTION's tokens (optionally command-scoped)."
+  (loop for name in (%completion-recognized-option-names option)
+        for token = (option-token-display-name name)
+        collect (if command-name
+                    (format nil "~A:~A~A"
+                            command-name
+                            token
+                            (if attached-p "=*" ""))
+                    (format nil "~A~A"
+                            token
+                            (if attached-p "=*" "")))))
+
 (defun %completion-option-value-patterns (option &key command-name attached-p)
   (when (%completion-option-candidates option)
-    (loop for name in (%completion-recognized-option-names option)
-          for token = (option-token-display-name name)
-          collect (if command-name
-                      (format nil "~A:~A~A"
-                              command-name
-                              token
-                              (if attached-p "=*" ""))
-                      (format nil "~A~A"
-                              token
-                              (if attached-p "=*" ""))))))
+    (%completion-option-token-patterns option
+                                       :command-name command-name
+                                       :attached-p attached-p)))
 
 (defun %completion-option-scan-rules (options &key command-name)
   (with-output-to-string (out)
@@ -117,13 +146,27 @@
           (when (or (eq kind :value)
                     (and (eq kind :optional-value)
                          (option-consume-optional-value-p option)))
-            (let ((labels (%completion-option-value-patterns option
-                                                             :command-name command-name))
-                  (value-source (%completion-option-value-source option)))
-              (format out "      ~A) ~A ;;~%"
-                      (%completion-case-labels labels)
-                      (format nil "~A~@[ value_source=~A~]"
-                              (if (eq kind :value)
-                                  "expect_value=1"
-                                  "expect_optional_value=1")
-                              value-source)))))))))
+            (let* ((value-source (%completion-option-value-source option))
+                   (dir-hint-p (eq (option-value-hint option) :dir))
+                   (dynamic-p (and (option-complete option) t))
+                   ;; Emit a case for candidates, a :dir hint (explicit compgen
+                   ;; -d), or a :complete function (runtime callback). A :file
+                   ;; hint / plain value option instead falls through to `complete
+                   ;; -o default` filename completion. An empty case label (`)`)
+                   ;; is a bash syntax error, so nothing is emitted otherwise.
+                   (emit-p (or value-source dir-hint-p dynamic-p))
+                   (expect (if (eq kind :value)
+                               "expect_value=1"
+                               "expect_optional_value=1")))
+              (when emit-p
+                (format out "      ~A) ~A ;;~%"
+                        (%completion-case-labels
+                         (%completion-option-token-patterns option
+                                                            :command-name command-name))
+                        (cond
+                          (dynamic-p
+                           (format nil "~A comp_dynamic=~A" expect
+                                   (%completion-shell-quote
+                                    (string-downcase (symbol-name (option-key option))))))
+                          (value-source (format nil "~A value_source=~A" expect value-source))
+                          (dir-hint-p (format nil "~A comp_dir=1" expect))))))))))))

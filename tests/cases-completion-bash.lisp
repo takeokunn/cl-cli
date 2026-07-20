@@ -1,11 +1,43 @@
 (in-package :cl-cli/tests)
 
 (describe-sequential "completion bash"
+  (it "consumes a pending expect_value into candidate completion"
+    ;; Regression: the `case "$prev"` scan set expect_value / value_source but
+    ;; nothing turned them into COMPREPLY, so `--opt <TAB>` completed nothing.
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (make-option :name "mode" :kind :value
+                                                             :choices '("dev" "prod")))))
+           (text (render-completion app "bash")))
+      (assert-searches text
+                       "_init_completion -s"
+                       "expect_value"
+                       "if [[ -n \"$expect_value\" || -n \"$expect_optional_value\" ]]; then"
+                       "COMPREPLY=( $(compgen -W \"$value_source\" -- \"$cur\") )")))
+
+  (it "completes nested subcommands and their option scope"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (make-option :name "verbose" :kind :flag))
+                          :commands (list (make-command
+                                           :name "remote"
+                                           :options (list (make-option :name "porcelain" :kind :flag))
+                                           :subcommands (list (make-command :name "add")
+                                                              (make-command :name "remove"))))))
+           (text (render-completion app "bash")))
+      (assert-searches text
+                       ;; nested subcommand names offered at the next word
+                       "case \"${words[2]}\" in"
+                       "compgen -W 'add remove'"
+                       ;; the leaf 'add' scope includes global + parent options
+                       "case \"remote/add:$cur\" in"
+                       ;; global-option fallback is guarded so it does not shadow
+                       ;; subcommand option completion
+                       "case \"${words[1]}\" in")))
+
   (it "includes visible commands and options"
     (let ((app (completion-visible-commands-and-options-fixture)))
       (assert-completion-searches (app)
         "_demo_completion()"
-        "complete -F _demo_completion 'demo'"
+        "complete -o default -F _demo_completion 'demo'"
         "compgen -W '--verbose -v -h --help -V --version'"
         "compgen -W 'compile build'"
         "compgen -W '--verbose -v --output -o -h --help -V --version'")))

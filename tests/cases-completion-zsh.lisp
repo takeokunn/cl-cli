@@ -1,6 +1,22 @@
 (in-package :cl-cli/tests)
 
 (describe-sequential "completion zsh"
+  (it "completes nested subcommands with accumulated option scope"
+    (let* ((app (make-app :name "demo"
+                          :global-options (list (make-option :name "verbose" :kind :flag))
+                          :commands (list (make-command
+                                           :name "remote"
+                                           :options (list (make-option :name "porcelain" :kind :flag))
+                                           :subcommands (list (make-command :name "add")
+                                                              (make-command :name "remove"))))))
+           (text (render-completion app "zsh")))
+      (assert-searches text
+                       "case \"${words[3]}\" in"
+                       "_describe 'commands' subcommand_specs"
+                       ;; the add clause carries the accumulated option scope
+                       "--verbose"
+                       "--porcelain")))
+
   (it "includes visible commands and options"
     (let ((app (completion-visible-commands-and-options-fixture)))
       (assert-completion-searches (app "zsh")
