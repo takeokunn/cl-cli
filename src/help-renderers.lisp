@@ -13,6 +13,19 @@ so by the time styling runs the value is always a concrete boolean.")
       (format nil "~C[~Am~A~C[0m" #\Escape code text #\Escape)
       text))
 
+(defun %terminal-safe-text (text)
+  "Drop terminal control characters from free-form help metadata."
+  (with-output-to-string (out)
+    (loop for char across (or text "")
+          do (let ((code (char-code char)))
+               (cond
+                 ((member char '(#\Newline #\Return #\Tab))
+                  (write-char #\Space out))
+                 ((or (< code 32)
+                      (= code 127)
+                      (and (>= code 128) (< code 160))))
+                 (t (write-char char out)))))))
+
 (defun %style-heading (text)
   (%ansi "1" text))
 
@@ -53,7 +66,8 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
 
 (defun %emit-help-row (stream padded-name description)
   "Emit a `  NAME  DESCRIPTION` row, word-wrapping DESCRIPTION under *HELP-WIDTH*."
-  (let ((width *help-width*))
+  (let ((width *help-width*)
+        (description (%terminal-safe-text description)))
     (if (and width
              (integerp width)
              (plusp (length description))
@@ -82,29 +96,32 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
       (format nil " (~{~A~^; ~})" parts)
       ""))
 
-(defun %public-relation-targets (option options relation-targets)
+(defun %public-relation-targets
+    (option options relation-targets &optional (target-table (%option-target-table options)))
   (let ((targets nil))
     (dolist (target relation-targets (nreverse targets))
-      (let ((resolved (resolve-related-option-spec options target)))
+      (let ((resolved (%lookup-option-target target-table target)))
         (when (and resolved
                    (not (eq (option-key resolved) (option-key option)))
                    (public-option-candidate-p resolved))
           (push target targets))))))
 
-(defun %option-group-member-names (option options)
+(defun %option-group-member-names
+    (option options &optional (target-table (%option-target-table options)))
   "Public display names of the members of OPTION's exclusive group, or NIL."
   (let ((group (option-group option)))
     (when group
       (loop for key in (option-group-members group)
-            for spec = (resolve-related-option-spec options key)
+            for spec = (%lookup-option-target target-table key)
             when (and spec (public-option-candidate-p spec))
               collect (option-token-display-name (first (option-names spec)))))))
 
-(defun %option-intra-group-conflict-p (option options target)
+(defun %option-intra-group-conflict-p
+    (option options target &optional (target-table (%option-target-table options)))
   "True when TARGET is another member of OPTION's own exclusive group."
   (let ((group (option-group option)))
     (and group
-         (let ((resolved (resolve-related-option-spec options target)))
+         (let ((resolved (%lookup-option-target target-table target)))
            (and resolved
                 (member (option-key resolved)
                         (option-group-members group)))))))
@@ -113,7 +130,7 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
   "A help/doc note for a DEPRECATED designator (T or reason string), or NIL."
   (cond
     ((null deprecated) nil)
-    ((stringp deprecated) (format nil "deprecated: ~A" deprecated))
+    ((stringp deprecated) (format nil "deprecated: ~A" (%terminal-safe-text deprecated)))
     (t "deprecated")))
 
 (defun %value-hint-note (hint)
@@ -131,7 +148,8 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
     (max (format nil "max: ~A" max))
     (t nil)))
 
-(defun %option-metadata-parts (option options)
+(defun %option-metadata-parts
+    (option options &optional (target-table (%option-target-table options)))
   (let ((parts nil))
     (let ((deprecation (%deprecation-note (option-deprecated option))))
       (when deprecation
@@ -164,7 +182,7 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
       (push (format nil "env: ~{~A~^, ~}" (option-env-vars option)) parts))
     (when (option-choices option)
       (push (format nil "choices: ~{~A~^ | ~}" (option-choices option)) parts))
-    (let ((group-members (%option-group-member-names option options)))
+    (let ((group-members (%option-group-member-names option options target-table)))
       (when group-members
         (push (if (eq (option-group-mode (option-group option)) :inclusive)
                   (format nil "all or none of: ~{~A~^ | ~}" group-members)
@@ -175,7 +193,8 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
                           group-members))
               parts)))
     (let ((visible-requires (%public-relation-targets option options
-                                                      (option-requires option))))
+                                                      (option-requires option)
+                                                      target-table)))
       (when visible-requires
         (push (format nil "requires: ~{~A~^, ~}"
                       (mapcar #'option-relation-target-display-name
@@ -183,21 +202,24 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
               parts)))
     (let ((visible-requires-any-of (%public-relation-targets
                                      option options
-                                     (option-requires-any-of option))))
+                                     (option-requires-any-of option)
+                                     target-table)))
       (when visible-requires-any-of
         (push (format nil "requires one of: ~{~A~^, ~}"
                       (mapcar #'option-relation-target-display-name
                               visible-requires-any-of))
               parts)))
     (let ((visible-required-if (%public-relation-targets
-                                option options (option-required-if option))))
+                                option options (option-required-if option)
+                                target-table)))
       (when visible-required-if
         (push (format nil "required if: ~{~A~^, ~}"
                       (mapcar #'option-relation-target-display-name
                               visible-required-if))
               parts)))
     (let ((visible-required-unless (%public-relation-targets
-                                    option options (option-required-unless option))))
+                                    option options (option-required-unless option)
+                                    target-table)))
       (when visible-required-unless
         (push (format nil "required unless: ~{~A~^, ~}"
                       (mapcar #'option-relation-target-display-name
@@ -207,9 +229,11 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
     ;; the "one of" line above; only surface conflicts with options outside it.
     (let ((visible-conflicts
             (remove-if (lambda (target)
-                         (%option-intra-group-conflict-p option options target))
+                         (%option-intra-group-conflict-p option options target
+                                                        target-table))
                        (%public-relation-targets option options
-                                                 (option-conflicts-with option)))))
+                                                 (option-conflicts-with option)
+                                                 target-table))))
       (when visible-conflicts
         (push (format nil "conflicts: ~{~A~^, ~}"
                       (mapcar #'option-relation-target-display-name
@@ -217,17 +241,22 @@ sets it accepts a positive integer, NIL, or :AUTO; :AUTO resolves via
               parts)))
     (nreverse parts)))
 
-(defun %option-metadata-string (option options)
-  (%join-help-metadata (%option-metadata-parts option options)))
+(defun %option-metadata-string
+    (option options &optional (target-table (%option-target-table options)))
+  (%join-help-metadata (%option-metadata-parts option options target-table)))
 
 (defun %option-display-string (option)
   (with-output-to-string (out)
-    (loop for name in (append (option-names option)
-                              (option-negated-names option))
-          for index from 0
-          do (when (> index 0)
-               (write-string ", " out))
-             (write-string (option-token-display-name name) out))
+    (let ((index 0))
+      (labels ((write-option-name (name)
+                 (when (> index 0)
+                   (write-string ", " out))
+                 (write-string (option-token-display-name name) out)
+                 (incf index)))
+        (dolist (name (option-names option))
+          (write-option-name name))
+        (dolist (name (option-negated-names option))
+          (write-option-name name))))
     (when (and (option-kind option)
                (not (member (option-kind option) '(:flag :boolean :count))))
       (let ((value-name (or (option-value-name option)
@@ -272,15 +301,17 @@ are no required options, leaving existing usage lines untouched."
                  (not (option-hidden-p option)))
         (format out " ~A" (%required-option-synopsis-token option))))))
 
-(defun %option-description-string (option options)
+(defun %option-description-string
+    (option options &optional (target-table (%option-target-table options)))
   (concatenate 'string
                (or (option-description option) "")
-               (%option-metadata-string option options)))
+               (%option-metadata-string option options target-table)))
 
-(defun %print-option-row (stream option options)
+(defun %print-option-row
+    (stream option options &optional (target-table (%option-target-table options)))
   (%emit-help-row stream
                   (%style-padded-name (%option-display-string option) 24)
-                  (%option-description-string option options)))
+                  (%option-description-string option options target-table)))
 
 (defun %usage-positionals-string (positionals)
   (with-output-to-string (out)
@@ -289,7 +320,7 @@ are no required options, leaving existing usage lines untouched."
 
 (defun %format-root-usage (app)
   (with-output-to-string (out)
-    (format out "Usage: ~A" (app-name app))
+    (format out "Usage: ~A" (%terminal-safe-text (app-name app)))
     (when (app-global-options app)
       (format out " ~A" (%usage-options-token "global-options")))
     (write-string (%required-options-synopsis (app-global-options app)) out)
@@ -355,7 +386,7 @@ deprecated command reads the same everywhere."
 
 (defun %format-command-dispatch-usage (app)
   (format nil "Usage: ~A~A <command> [args]~%"
-          (app-name app)
+          (%terminal-safe-text (app-name app))
           (%required-options-synopsis (app-global-options app))))
 
 (defun %print-commands (stream commands)
@@ -406,4 +437,4 @@ deprecated command reads the same everywhere."
   (when examples
     (format stream "~&~A~%" (%style-heading "Examples:"))
     (dolist (example examples)
-      (format stream "  ~A~%" example))))
+      (format stream "  ~A~%" (%terminal-safe-text example)))))

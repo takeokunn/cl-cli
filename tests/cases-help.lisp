@@ -158,6 +158,61 @@
       (expect (= exit-code 70))
       (assert-searches text "Internal error: boom")))
 
+  (it "run-app strips terminal controls from usage errors"
+    (let* ((arg (format nil "~C[31mboom" #\Escape))
+           (app (make-app :name "demo"))
+           (exit-code nil)
+           (text (with-string-output (stderr)
+                   (setf exit-code (run-app app
+                                            :argv (list "demo" arg)
+                                            :stderr stderr
+                                            :stdout (make-string-output-stream))))))
+      (expect (= exit-code 64))
+      (assert-searches text "[31mboom")
+      (expect (null (position #\Escape text)))))
+
+  (it "app help strips terminal controls from root usage names"
+    (let* ((escape (string #\Escape))
+           (app (cl-cli::%make-app-spec :name (format nil "demo~A[2J" escape)
+                                        :summary "Demo app."))
+           (text (with-string-output (stream)
+                   (print-app-help app stream))))
+      (assert-searches text "Usage: demo[2J")
+      (expect (null (position #\Escape text)))))
+
+  (it "run-app strips terminal controls from internal error diagnostics"
+    (let* ((app (make-app :name "demo"
+                          :handler (lambda (invocation)
+                                     (declare (ignore invocation))
+                                     (error (format nil "bad~C[31mred~C[0m~%next"
+                                                    #\Escape #\Escape)))))
+           (exit-code nil)
+           (text (with-string-output (stderr)
+                   (setf exit-code (run-app app
+                                            :argv '("demo")
+                                            :stderr stderr
+                                            :stdout (make-string-output-stream))))))
+      (expect (= exit-code 70))
+      (assert-searches text "Internal error: bad[31mred[0m next")
+      (expect (null (position #\Escape text)))))
+
+  (it "run-app strips terminal controls from version output"
+    (let* ((version (format nil "1.0~C[31mred~%next" #\Escape))
+           (app (make-app :name "demo" :version version))
+           (stderr (make-string-output-stream))
+           (exit-code nil)
+           (stdout
+             (with-output-to-string (stream)
+               (setf exit-code
+                     (run-app app
+                              :argv '("demo" "--version")
+                              :stdout stream
+                              :stderr stderr)))))
+      (expect (= exit-code 0))
+      (expect (string= stdout (format nil "demo 1.0[31mred next~%")))
+      (expect (string= (get-output-stream-string stderr) ""))
+      (expect (null (position #\Escape stdout)))))
+
   (it "app help hides version when app version is missing"
     (let ((app (make-app :name "demo")))
       (with-app-help-text (text app)
@@ -214,6 +269,43 @@
                           :commands (list command))))
       (with-command-help-text (text app command)
         (assert-searches text "Examples:" "  demo run target.lisp" "  demo run target.lisp --verbose"))))
+
+  (it "accepts app help keyword options without an explicit stream"
+    (let* ((app (make-app :name "demo" :summary "Summary."))
+           (stream (make-string-output-stream)))
+      (let ((*standard-output* stream))
+        (print-app-help app :width 40))
+      (let ((text (get-output-stream-string stream)))
+        (assert-searches text
+                         "Usage: demo"
+                         "Summary."))))
+
+  (it "accepts command help keyword options without an explicit stream"
+    (let* ((command (make-command :name "run" :description "Run target."))
+           (app (make-app :name "demo" :commands (list command)))
+           (stream (make-string-output-stream)))
+      (let ((*standard-output* stream))
+        (print-command-help app command :width 40))
+      (let ((text (get-output-stream-string stream)))
+        (assert-searches text
+                         "Usage: demo run"
+                         "Run target."))))
+
+  (it "strips terminal control characters from free-form help text"
+    (let* ((escape (string #\Escape))
+           (app (make-app :name "demo"
+                          :summary (format nil "safe~A[2Jtext" escape)
+                          :global-options (list (make-option
+                                                 :name "message"
+                                                 :description (format nil "hello~A[Hworld" escape)))
+                          :examples (list (format nil "demo run~A[31m" escape))))
+           (text (with-string-output (stream)
+                   (print-app-help app stream))))
+      (assert-searches text
+                       "safe[2Jtext"
+                       "hello[Hworld"
+                       "demo run[31m")
+      (expect (null (position #\Escape text)))))
 
   (it "command help usage includes options token"
     (let* ((command (make-command

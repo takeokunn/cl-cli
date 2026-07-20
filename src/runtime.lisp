@@ -124,14 +124,20 @@ literal separator token used to terminate CLI option parsing."
 (defun %warn-deprecated-command (command stream)
   "Print a stderr deprecation warning for a dispatched deprecated COMMAND."
   (format stream "~&warning: command '~A' is ~A~%"
-          (command-name command)
-          (or (%deprecation-note (command-deprecated command)) "deprecated")))
+          (%terminal-safe-text (command-name command))
+          (%terminal-safe-text
+           (or (%deprecation-note (command-deprecated command)) "deprecated"))))
+
+(defun %runtime-diagnostic-text (condition)
+  (%terminal-safe-text (format nil "~A" condition)))
 
 (defun print-app-version-line (app stream)
   (let ((version (app-version-string app)))
     (if version
-        (format stream "~A ~A~%" (app-name app) version)
-        (format stream "~A~%" (app-name app)))))
+        (format stream "~A ~A~%"
+                (%terminal-safe-text (app-name app))
+                (%terminal-safe-text version))
+        (format stream "~A~%" (%terminal-safe-text (app-name app))))))
 
 (defun run-app (app &key argv (argv0 (first argv)) (stdout *standard-output*)
                   (stderr *error-output*) config color width
@@ -178,7 +184,7 @@ error; they default to the BSD sysexits values EX_USAGE (64) and EX_SOFTWARE
                      (print-app-help app stdout :color color :width width))))))
         0)
     (cli-usage-error (condition)
-      (format stderr "~&~A~%" condition)
+      (format stderr "~&~A~%" (%runtime-diagnostic-text condition))
       (cond
         ((and (cli-usage-error-app condition)
               (cli-usage-error-command condition))
@@ -194,5 +200,5 @@ error; they default to the BSD sysexits values EX_USAGE (64) and EX_SOFTWARE
                          :color color :width width)))
       usage-exit-code)
     (error (condition)
-      (format stderr "~&Internal error: ~A~%" condition)
+      (format stderr "~&Internal error: ~A~%" (%runtime-diagnostic-text condition))
       error-exit-code)))
