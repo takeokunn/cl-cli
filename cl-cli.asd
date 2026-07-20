@@ -45,6 +45,11 @@
                (:file "src/completion-renderers-bash")
                (:file "src/completion-renderers-zsh")
                (:file "src/completion-renderers-fish")
+               (:file "src/doc-helpers")
+               (:file "src/doc-renderers-manpage")
+               (:file "src/doc-renderers-markdown")
+               (:file "src/doc-renderers-json")
+               (:file "src/doc-commands")
                (:file "src/completion-commands")))
 
 (asdf:defsystem "cl-cli/tests"
@@ -97,6 +102,11 @@
                (:file "tests/cases-completion-zsh")
                (:file "tests/cases-completion-fish")
                (:file "tests/cases-completion-commands")
+               (:file "tests/cases-doc-manpage")
+               (:file "tests/cases-manpage-metadata")
+               (:file "tests/cases-doc-markdown")
+               (:file "tests/cases-doc-json")
+               (:file "tests/cases-doc-commands")
                (:file "tests/cases-consumer-migrations"))
   :perform (asdf:test-op (op c)
              (uiop:symbol-call :cl-cli/tests :run-tests)))
