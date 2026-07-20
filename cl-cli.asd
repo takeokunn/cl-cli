@@ -17,7 +17,7 @@
   :bug-tracker +cl-cli-issues-url+
   :source-control (:git +cl-cli-repository-url+)
   :license "MIT"
-  :version "0.1.0"
+  :version "0.2.0"
   :depends-on ("uiop" "cl-prolog")
   :in-order-to ((asdf:test-op (asdf:test-op "cl-cli/tests")))
   :serial t
@@ -60,7 +60,7 @@
   :description "Test system for cl-cli."
   :author "takeokunn"
   :license "MIT"
-  :version "0.1.0"
+  :version "0.2.0"
   :depends-on ("cl-cli" "cl-weave" "cl-prolog/weave")
   :serial t
   :components ((:file "tests/package")

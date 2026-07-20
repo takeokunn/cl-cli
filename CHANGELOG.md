@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-20
+
 ### Added
 
 - Dynamic (runtime) completion now works in all six generated shells. Previously
@@ -213,6 +215,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Option `:requires`/`:conflicts-with` validation now reuses the Prolog
   rulebase built once at `make-app` time instead of rebuilding and re-querying
   it on every `parse-argv` call.
+- Option resolution, relation validation, and completion metadata now build the
+  option and target lookup once as a hash table instead of scanning the option
+  list linearly on every access; the dynamic-completion index and subcommand
+  lookup are likewise cached per app, and repeated-option value accumulation is
+  now O(1) per token rather than O(n²).
 
 ### Fixed
 
@@ -273,5 +280,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   struct.
 - Corrected broken absolute-path documentation links and gave `SECURITY.md` a
   concrete private vulnerability-reporting path.
+- Generated shell completion now emits candidates through a more robust
+  protocol: bash builds `COMPREPLY` as an array with prefix filtering, dynamic
+  completion reads tab-delimited `value<TAB>description` records with
+  `while read` (instead of `cut -f1`, which mangled values containing tabs),
+  and PowerShell matches the current word with an ordinal `StartsWith`.
 
-[Unreleased]: https://github.com/takeokunn/cl-cli/commits/main
+### Security
+
+- Rendered output no longer trusts declared spec metadata verbatim: help,
+  usage, version, and deprecation text, generated shell completions, and
+  generated man-page / Markdown documentation now strip terminal control
+  characters (and, for Markdown, escape markup) from option names,
+  descriptions, and values, so hostile metadata can no longer inject ANSI
+  escape or other terminal control sequences into a user's terminal. Spec
+  construction additionally rejects control characters in option value names.
+
+[Unreleased]: https://github.com/takeokunn/cl-cli/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/takeokunn/cl-cli/releases/tag/v0.2.0
