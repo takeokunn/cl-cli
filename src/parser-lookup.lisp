@@ -120,6 +120,66 @@ distinct group is checked once."
                                                 member-specs))
                                 :option (option-key (first member-specs))))))))))
 
+(defun validate-inclusive-groups (values specs)
+  "Signal when an all-or-none option group has some but not all members set.
+
+Each distinct :INCLUSIVE group is checked once. Hidden members are named
+generically in the error, mirroring the other relationship diagnostics."
+  (let ((seen (make-hash-table :test #'eq)))
+    (dolist (spec specs values)
+      (let ((group (option-group spec)))
+        (when (and group
+                   (eq (option-group-mode group) :inclusive)
+                   (not (gethash group seen)))
+          (setf (gethash group seen) t)
+          (let* ((members (option-group-members group))
+                 (present (remove-if-not (lambda (key) (plist-has-key-p values key)) members))
+                 (missing (remove-if (lambda (key) (plist-has-key-p values key)) members)))
+            (when (and present missing)
+              (flet ((named (key) (find key specs :key #'option-key :test #'eq)))
+                (signal-cli-error
+                 'cli-missing-dependent-option
+                 (format nil "Options ~{~A~^, ~} must be used together; missing ~{~A~^, ~}."
+                         (mapcar (lambda (key) (public-option-display-name (named key))) members)
+                         (mapcar (lambda (key) (public-option-display-name (named key))) missing))
+                 :option (option-key (named (first present)))
+                 :dependency (first missing))))))))))
+
+(defun %relation-target-present-p (values specs target)
+  (let ((spec (resolve-related-option-spec specs target)))
+    (and spec (plist-has-key-p values (option-key spec)))))
+
+(defun validate-conditional-requirements (values specs)
+  "Enforce :required-if / :required-unless for options absent from VALUES.
+
+:required-if makes an option mandatory when any listed target is present;
+:required-unless makes it mandatory unless any listed target is present."
+  (dolist (spec specs values)
+    (unless (plist-has-key-p values (option-key spec))
+      (let ((trigger (find-if (lambda (target)
+                                (%relation-target-present-p values specs target))
+                              (option-required-if spec))))
+        (when trigger
+          (signal-cli-error
+           'cli-missing-option-value
+           (format nil "Option ~A is required when ~A is supplied."
+                   (public-option-display-name spec)
+                   (public-option-display-name (resolve-related-option-spec specs trigger)))
+           :option (option-key spec))))
+      (when (and (option-required-unless spec)
+                 (notany (lambda (target)
+                           (%relation-target-present-p values specs target))
+                         (option-required-unless spec)))
+        (signal-cli-error
+         'cli-missing-option-value
+         (format nil "Option ~A is required unless one of ~{~A~^, ~} is supplied."
+                 (public-option-display-name spec)
+                 (mapcar (lambda (target)
+                           (public-option-display-name
+                            (resolve-related-option-spec specs target)))
+                         (option-required-unless spec)))
+         :option (option-key spec))))))
+
 (defun option-table-from-specs (specs)
   (let ((table (make-hash-table :test 'equal)))
     (dolist (spec specs table)
@@ -188,11 +248,51 @@ distinct group is checked once."
           (format-suggestion-suffix command-name
                                     (command-candidate-names app))))
 
+(defvar *allow-abbreviated-options* nil
+  "When true, RESOLVE-LONG-OPTION-ENTRY accepts a unique long-option prefix.
+
+Bound by PARSE-ARGV from the app's :allow-abbreviated-options flag so the parser
+stays strict by default; see MAKE-APP.")
+
 (defun resolve-option-entry (table name)
   (gethash (canonical-option-name name) table))
 
+(defun %abbreviated-long-option-entry (name table)
+  "Resolve NAME as a unique long-option prefix in TABLE, or signal / return NIL.
+
+Collects every long (multi-character) table key that has NAME as a prefix,
+collapsing entries that denote the same option and negation sense. A single
+distinct result is returned; several distinct results signal an ambiguity;
+no match returns NIL so the caller can report an unknown option."
+  (let ((results '()))
+    (maphash
+     (lambda (key entry)
+       (when (and (> (length key) 1)
+                  (<= (length name) (length key))
+                  (string= name key :end2 (length name)))
+         (pushnew entry results
+                  :test (lambda (a b)
+                          (and (eq (option-key (option-entry-spec a))
+                                   (option-key (option-entry-spec b)))
+                               (eq (option-entry-negated-p a)
+                                   (option-entry-negated-p b)))))))
+     table)
+    (cond
+      ((null results) nil)
+      ((null (rest results)) (first results))
+      (t
+       (signal-cli-error
+        'cli-unknown-option
+        (format nil "Ambiguous option --~A matches: ~{--~A~^, ~}"
+                name
+                (sort (mapcar (lambda (entry) (getf entry :name)) results)
+                      #'string<))
+        :option name)))))
+
 (defun resolve-long-option-entry (name table specs)
   (or (resolve-option-entry table name)
+      (and *allow-abbreviated-options*
+           (%abbreviated-long-option-entry name table))
       (signal-cli-error 'cli-unknown-option
                         (unknown-option-message (format nil "--~A" name)
                                                 (option-candidate-names specs

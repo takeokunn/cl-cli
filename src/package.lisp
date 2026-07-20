@@ -7,16 +7,27 @@
    :make-positional
    :exclusive-group
    :required-exclusive-group
+   :inclusive-group
    :make-help-command
    :make-version-command
    :make-completion-command
+   :make-docs-command
+   :make-complete-command
    :make-standard-commands
+   :render-docs
+   :render-complete-reply
    :parse-argv
    :run-app
    :render-completion
    :render-bash-completion
    :render-zsh-completion
    :render-fish-completion
+   :render-powershell-completion
+   :render-nushell-completion
+   :render-elvish-completion
+   :render-manpage
+   :render-markdown
+   :render-json
    :current-process-argv
    :default-runtime-markers
    :extract-application-argv
@@ -26,15 +37,18 @@
    :print-command-help
    :command-by-name
    :option-value
+   :option-value-source
    :positional-value
    :invocation-app
    :invocation-command
+   :invocation-command-path
    :invocation-action
    :invocation-argv0
    :invocation-raw-argv
    :invocation-global-options
    :invocation-command-options
    :invocation-positionals
+   :invocation-option-sources
    :invocation-stdout
    :invocation-stderr
    :app-name
@@ -48,6 +62,14 @@
    :app-handler
    :app-examples
    :app-help-footer
+   :app-see-also
+   :app-authors
+   :app-manual-date
+   :app-allow-abbreviated-options
+   :app-expand-response-files
+   :app-allow-negative-numbers
+   :app-require-command
+   :app-auto-help
    :command-name
    :command-aliases
    :command-group
@@ -57,18 +79,29 @@
    :command-positionals
    :command-handler
    :command-hidden-p
+   :command-deprecated
+   :command-help-footer
    :option-key
    :option-names
    :option-negated-names
    :option-kind
    :option-description
    :option-value-name
+   :option-value-type
+   :option-value-min
+   :option-value-max
+   :option-value-delimiter
+   :option-value-count
+   :option-value-hint
    :option-default
    :option-env-vars
    :option-choices
    :option-completion-candidates
+   :option-complete
    :option-parser
    :option-required-p
+   :option-required-if
+   :option-required-unless
    :option-requires
    :option-requires-any-of
    :option-conflicts-with
@@ -76,6 +109,8 @@
    :option-consume-optional-value-p
    :option-stop-parsing-p
    :option-hidden-p
+   :option-deprecated
+   :option-help-group
    :cli-usage-error
    :cli-unknown-option
    :cli-unknown-command

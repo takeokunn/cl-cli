@@ -26,13 +26,35 @@
                     default)
             default))))
 
+(defun %validate-rest-arity (spec token-count)
+  "Enforce a rest positional's :min-count / :max-count against TOKEN-COUNT."
+  (let ((min (positional-spec-min-count spec))
+        (max (positional-spec-max-count spec)))
+    (when (and min (< token-count min))
+      (signal-cli-error 'cli-missing-positional
+                        (format nil "Positional ~A requires at least ~A value~:P (got ~A)."
+                                (positional-spec-key spec) min token-count)
+                        :name (positional-spec-key spec)))
+    (when (and max (> token-count max))
+      (signal-cli-error 'cli-unexpected-argument
+                        (format nil "Positional ~A accepts at most ~A value~:P (got ~A)."
+                                (positional-spec-key spec) max token-count)
+                        :argument (positional-spec-key spec)))))
+
 (defun apply-positional-spec (spec values tokens)
   (cond
     ((positional-spec-rest-p spec)
-     (when (or tokens (positional-spec-default-present-p spec))
-       (setf values (store-option-value values spec
-                                        (parse-positional-rest-values spec
-                                                                      tokens))))
+     (cond
+       (tokens
+        (%validate-rest-arity spec (length tokens))
+        (setf values (store-option-value values spec
+                                         (parse-positional-rest-values spec tokens))))
+       ((positional-spec-default-present-p spec)
+        (setf values (store-option-value values spec
+                                         (parse-positional-rest-values spec nil))))
+       (t
+        ;; No tokens and no default: still enforce a positive :min-count.
+        (%validate-rest-arity spec 0)))
      (values values nil))
     ((null tokens)
      (if (positional-spec-required-p spec)
