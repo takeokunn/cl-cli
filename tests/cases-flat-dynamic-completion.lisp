@@ -42,7 +42,7 @@
       (assert-searches script
                        "def \"nu-complete dyntool branch\" []"
                        "--branch: string@\"nu-complete dyntool branch\""
-                       "^dyntool __complete branch")))
+                       "^\"dyntool\" __complete branch")))
 
   (it "nushell leaves a non-dynamic value flag as a plain string"
     ;; The subcommand completer (command?: string@"nu-complete ... command") is

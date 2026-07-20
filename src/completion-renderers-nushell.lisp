@@ -12,7 +12,7 @@
   "Quote STRING as a Nushell double-quoted literal."
   (with-output-to-string (out)
     (write-char #\" out)
-    (loop for char across string
+    (loop for char across (%completion-control-safe-string string)
           do (case char
                (#\\ (write-string "\\\\" out))
                (#\" (write-string "\\\"" out))
@@ -54,7 +54,10 @@ trailing `# ...` comment."
                 (value-p ": string")
                 (t ""))))
         (format nil "  ~A~A~@[  # ~A~]"
-                flag type-part (option-description option))))))
+                flag type-part
+                (and (option-description option)
+                     (%completion-control-safe-string
+                      (option-description option))))))))
 
 (defun %completion-nushell-dynamic-completers (app stream)
   "Emit a `nu-complete` def per dynamic GLOBAL option, or nothing.
@@ -62,15 +65,16 @@ trailing `# ...` comment."
 Each shells out to `app __complete KEY` and returns the first (value) column of
 each line; Nushell narrows the list by the word the user has typed. Only global
 options are attached, matching the flags the generated `extern` actually lists."
-  (dolist (option (remove-if #'option-hidden-p (app-global-options app)))
-    (when (option-complete option)
-      (format stream "def ~A [] {~%"
-              (%completion-nushell-quote
-               (%completion-nushell-completer-name app option)))
-      (format stream "  ^~A __complete ~A | lines | each { |it| $it | split row (char tab) | first }~%"
-              (app-name app)
-              (string-downcase (symbol-name (option-key option))))
-      (format stream "}~%~%"))))
+  (let ((app-command (%completion-nushell-quote (app-name app))))
+    (dolist (option (remove-if #'option-hidden-p (app-global-options app)))
+      (when (option-complete option)
+        (format stream "def ~A [] {~%"
+                (%completion-nushell-quote
+                 (%completion-nushell-completer-name app option)))
+        (format stream "  ^~A __complete ~A | lines | each { |it| $it | split row (char tab) | first }~%"
+                app-command
+                (string-downcase (symbol-name (option-key option))))
+        (format stream "}~%~%")))))
 
 (defun %completion-nushell-first-arg-values (app)
   "First-token candidates: subcommand names plus any root positional values."
@@ -98,7 +102,7 @@ Hidden commands and options are omitted."
     (return-from render-nushell-completion
       (with-output-to-string (string-stream)
         (render-nushell-completion app string-stream))))
-  (let ((app-name (app-name app)))
+  (let ((app-name (%completion-control-safe-string (app-name app))))
     (format stream "# Nushell completion for ~A~%" app-name)
     (%completion-nushell-dynamic-completers app stream)
     (%completion-nushell-command-completer app stream)

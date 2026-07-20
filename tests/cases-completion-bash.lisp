@@ -12,7 +12,8 @@
                        "_init_completion -s"
                        "expect_value"
                        "if [[ -n \"$expect_value\" || -n \"$expect_optional_value\" ]]; then"
-                       "COMPREPLY=( $(compgen -W \"$value_source\" -- \"$cur\") )")))
+                       "value_source=('dev' 'prod')"
+                       "for comp_value in \"${value_source[@]}\"; do")))
 
   (it "completes nested subcommands and their option scope"
     (let* ((app (make-app :name "demo"
@@ -26,7 +27,7 @@
       (assert-searches text
                        ;; nested subcommand names offered at the next word
                        "case \"${words[2]}\" in"
-                       "compgen -W 'add remove'"
+                       "comp_values=('add' 'remove')"
                        ;; the leaf 'add' scope includes global + parent options
                        "case \"remote/add:$cur\" in"
                        ;; global-option fallback is guarded so it does not shadow
@@ -38,9 +39,9 @@
       (assert-completion-searches (app)
         "_demo_completion()"
         "complete -o default -F _demo_completion 'demo'"
-        "compgen -W '--verbose -v -h --help -V --version'"
-        "compgen -W 'compile build'"
-        "compgen -W '--verbose -v --output -o -h --help -V --version'")))
+        "comp_values=('--verbose' '-v' '-h' '--help' '-V' '--version')"
+        "comp_values=('compile' 'build')"
+        "comp_values=('--verbose' '-v' '--output' '-o' '-h' '--help' '-V' '--version')")))
 
   (it "hides version when app version is missing"
     (let ((app (make-completion-fixture
@@ -48,7 +49,7 @@
                                                    :short #\v
                                                    :kind :flag)))))
       (assert-completion-searches (app)
-        "compgen -W '--verbose -v -h --help'")
+        "comp_values=('--verbose' '-v' '-h' '--help')")
       (assert-completion-not-searches (app)
         "-V --version")))
 
@@ -65,10 +66,10 @@
                                                     :kind :value
                                                     :choices '("bin" "obj"))))))
       (assert-completion-searches (app)
-        "compgen -W 'compile build c'"
-        "--verbose --chatty"
-        "--output -o --out"
-        "'compile:--output'|'compile:-o'|'compile:--out') expect_value=1 value_source='bin obj' ;;"
+        "comp_values=('compile' 'build' 'c')"
+        "comp_values=('--verbose' '--chatty' '-h' '--help')"
+        "comp_values=('--verbose' '--chatty' '--output' '-o' '--out' '-h' '--help')"
+        "'compile:--output'|'compile:-o'|'compile:--out') expect_value=1 value_source=('bin' 'obj') ;;"
         "--chatty")))
 
   (it "allows command aliases to enable command option completion"
@@ -86,20 +87,42 @@
   (it "includes choice values"
     (let ((app (completion-choice-values-fixture)))
       (assert-completion-searches (app)
-        "value_source='dev prod'"
-        "compgen -W \"$value_source\" -- \"$cur\""
+        "value_source=('dev' 'prod')"
+        "for comp_value in \"${value_source[@]}\"; do"
         "'compile:--profile=*'")))
 
   (it "uses completion candidates without choices"
     (let ((app (completion-candidate-descriptions-fixture)))
       (assert-completion-searches (app)
-        "value_source='dev prod'"
+        "value_source=('dev' 'prod')"
         "'compile:--profile=*'")))
+
+  (it "preserves spaces in static option and positional candidates"
+    (let* ((app (make-app :name "demo"
+                          :global-options
+                          (list (make-option :name "mode"
+                                             :kind :value
+                                             :choices '("dark mode" "light")))
+                          :positionals
+                          (list (make-positional
+                                 :key :target
+                                 :completion-candidates
+                                 '(("src dir" . nil) ("dist" . nil))))))
+           (text (render-completion app "bash")))
+      (assert-searches text
+                       "value_source=('dark mode' 'light')"
+                       "comp_values=('src dir' 'dist')"
+                       "[[ -n \"$comp_value\" && \"$comp_value\" == \"$cur\"* ]] && COMPREPLY+=(\"$comp_value\")")
+      (assert-not-searches text
+                            "compgen -W \"$value_source\" -- \"$cur\""
+                            "compgen -W '--"
+                            "compgen -W 'compile"
+                            "compgen -W 'src dir dist'")))
 
   (it "includes negated boolean options"
     (let ((app (completion-negated-boolean-options-fixture)))
       (assert-completion-searches (app)
-        "--threads --no-threads -h --help" "'compile'")))
+        "comp_values=('--threads' '--no-threads' '-h' '--help')" "'compile'")))
 
   (it "hides hidden commands and options"
     (let ((app (completion-hidden-commands-and-options-fixture)))

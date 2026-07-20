@@ -10,7 +10,7 @@
   "Quote STRING as an Elvish single-quoted literal (a quote doubles itself)."
   (with-output-to-string (out)
     (write-char #\' out)
-    (loop for char across string
+    (loop for char across (%completion-control-safe-string string)
           do (if (char= char #\')
                  (write-string "''" out)
                  (write-char char out)))
@@ -44,7 +44,7 @@ subcommands and global option tokens. Hidden commands and options are omitted."
     (return-from render-elvish-completion
       (with-output-to-string (string-stream)
         (render-elvish-completion app string-stream))))
-  (let* ((app-name (app-name app))
+  (let* ((app-name (%completion-control-safe-string (app-name app)))
          (commands (%completion-visible-command-tokens app))
          (options (%completion-command-option-tokens app nil))
          (positionals (%completion-app-positional-values app))
@@ -68,7 +68,7 @@ subcommands and global option tokens. Hidden commands and options are omitted."
                        dynamic))
        (format stream "  if (has-key $dynamic $prev) {~%")
        (format stream "    e:~A __complete $dynamic[$prev] $words[-1] | from-lines | each {|line|~%"
-               app-name)
+               (%completion-elvish-quote app-name))
        (format stream "      put (str:split \"\\t\" $line | take 1)~%")
        (format stream "    }~%")
        (format stream "  } else {~%")

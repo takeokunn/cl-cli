@@ -9,36 +9,37 @@
 ;;;; line. The shell never re-parses the whole command line -- it already knows
 ;;;; which slot is being completed -- so this needs no lenient parser.
 
-(defun %dynamic-all-commands (app)
-  "Every command in APP, including nested subcommands, depth-first."
-  (labels ((walk (commands)
-             (loop for command in commands
-                   append (cons command (walk (command-subcommands command))))))
-    (walk (app-commands app))))
+(defun %build-dynamic-completion-index (app)
+  "Map dynamic completion keys to their option/positional spec in one tree walk."
+  (let ((index (make-hash-table :test #'equal)))
+    (labels ((register-option (spec)
+               (when (option-complete spec)
+                 (setf (gethash (string-downcase (symbol-name (option-key spec))) index)
+                       spec)))
+             (register-positional (spec)
+               (when (positional-spec-complete spec)
+                 (setf (gethash (string-downcase (symbol-name (positional-spec-key spec))) index)
+                       spec)))
+             (walk-command (command)
+               (dolist (spec (command-options command))
+                 (register-option spec))
+               (dolist (spec (command-positionals command))
+                 (register-positional spec))
+               (dolist (subcommand (command-subcommands command))
+                 (walk-command subcommand))))
+      (dolist (spec (app-global-options app))
+        (register-option spec))
+      (dolist (spec (app-positionals app))
+        (register-positional spec))
+      (dolist (command (app-commands app))
+        (walk-command command)))
+    index))
 
-(defun %dynamic-option-specs (app)
-  (append (app-global-options app)
-          (loop for command in (%dynamic-all-commands app)
-                append (command-options command))))
-
-(defun %dynamic-positional-specs (app)
-  (append (app-positionals app)
-          (loop for command in (%dynamic-all-commands app)
-                append (command-positionals command))))
-
-(defun %key-name-matches-p (key-symbol key-string)
-  (string-equal key-string (string-downcase (symbol-name key-symbol))))
-
-(defun %find-dynamic-spec (app key)
-  "Resolve KEY (a downcased key name) to an option or positional with :complete."
-  (or (find-if (lambda (spec)
-                 (and (option-complete spec)
-                      (%key-name-matches-p (option-key spec) key)))
-               (%dynamic-option-specs app))
-      (find-if (lambda (spec)
-                 (and (positional-spec-complete spec)
-                      (%key-name-matches-p (positional-spec-key spec) key)))
-               (%dynamic-positional-specs app))))
+(defun %dynamic-completion-index (app)
+  "Return APP's cached dynamic completion index."
+  (or (app-dynamic-completion-index app)
+      (setf (app-dynamic-completion-index app)
+            (%build-dynamic-completion-index app))))
 
 (defun %spec-complete-function (spec)
   (if (typep spec 'option-spec)
@@ -51,15 +52,21 @@
 KEY names an option or positional declared with :complete; its function is
 called with PARTIAL and each returned candidate is printed on its own line. An
 unknown or non-dynamic KEY prints nothing."
-  (let ((spec (%find-dynamic-spec app key)))
+  (let ((spec (and key
+                   (gethash (string-downcase key)
+                            (%dynamic-completion-index app)))))
     (when spec
       (dolist (candidate (funcall (%spec-complete-function spec) (or partial "")))
         ;; A candidate may be a plain value or a (value . description) cons;
         ;; descriptions are emitted tab-separated (fish shows them natively, and
         ;; the bash/zsh callbacks keep only the first column).
         (if (consp candidate)
-            (format stream "~A~C~A~%" (car candidate) #\Tab (cdr candidate))
-            (format stream "~A~%" candidate)))))
+            (format stream "~A~C~A~%"
+                    (%completion-control-safe-string (car candidate))
+                    #\Tab
+                    (%completion-control-safe-string (cdr candidate)))
+            (format stream "~A~%"
+                    (%completion-control-safe-string candidate))))))
   (values))
 
 (defun make-complete-command (&key (name "__complete"))

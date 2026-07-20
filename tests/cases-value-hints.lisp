@@ -79,4 +79,4 @@
     (let* ((app (make-app :name "tool"
                           :global-options (list (make-option :name "output" :kind :value))))
            (text (render-completion app "bash")))
-      (expect (null (search (format nil "~%      ) " text) text))))))
+      (expect (null (search (format nil "~%      ) ") text))))))

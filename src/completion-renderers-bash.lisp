@@ -1,5 +1,15 @@
 (in-package :cl-cli)
 
+(defun %completion-bash-static-compreply-source (values indent &key replace-p)
+  (with-output-to-string (out)
+    (when replace-p
+      (format out "~ACOMPREPLY=()~%" indent))
+    (format out "~Acomp_values=~A~%" indent
+            (%completion-bash-array-literal values))
+    (format out "~Afor comp_value in \"${comp_values[@]}\"; do~%" indent)
+    (format out "~A  [[ -n \"$comp_value\" && \"$comp_value\" == \"$cur\"* ]] && COMPREPLY+=(\"$comp_value\")~%" indent)
+    (format out "~Adone~%" indent)))
+
 (defun %completion-bash-value-case-body (options &key command-name)
   (with-output-to-string (out)
     (dolist (option options)
@@ -10,8 +20,9 @@
                (value-source (%completion-option-value-source option)))
           (when (and labels value-source)
             (format out "    ~A)~%" (%completion-case-labels labels))
-            (format out "      value_source=~A~%" value-source)
-            (format out "      COMPREPLY=( $(compgen -W \"$value_source\" -- \"$cur\") )~%")
+            (write-string (%completion-bash-static-compreply-source
+                           value-source "      " :replace-p t)
+                          out)
             (format out "      return 0~%")
             (format out "      ;;~%")))))))
 
@@ -29,15 +40,21 @@ value_source when the previous word is a value option; this consumes them so a
 separated value (`--option <TAB>`) actually completes its candidates."
   (with-output-to-string (out)
     (format out "~Aif [[ -n \"$expect_value\" || -n \"$expect_optional_value\" ]]; then~%" indent)
+    (format out "~A  COMPREPLY=()~%" indent)
     (format out "~A  if [[ -n \"$comp_dynamic\" ]]; then~%" indent)
     ;; Query the program itself for runtime candidates (${words[0]} is the exact
     ;; command the user invoked); requires a __complete command in the app.
-    ;; cut -f1 drops any tab-separated description column (bash shows values only).
-    (format out "~A    COMPREPLY=( $(compgen -W \"$(\"${words[0]}\" __complete \"$comp_dynamic\" \"$cur\" 2>/dev/null | cut -f1)\" -- \"$cur\") )~%" indent)
+    ;; Read the tab-separated protocol directly so spaces in candidate values
+    ;; stay within the same completion record.
+    (format out "~A    while IFS=$'\\t' read -r comp_value _; do~%" indent)
+    (format out "~A      [[ -n \"$comp_value\" && \"$comp_value\" == \"$cur\"* ]] && COMPREPLY+=(\"$comp_value\")~%" indent)
+    (format out "~A    done < <(\"${words[0]}\" __complete \"$comp_dynamic\" \"$cur\" 2>/dev/null)~%" indent)
     (format out "~A  elif [[ -n \"$comp_dir\" ]]; then~%" indent)
     (format out "~A    COMPREPLY=( $(compgen -d -- \"$cur\") )~%" indent)
     (format out "~A  else~%" indent)
-    (format out "~A    COMPREPLY=( $(compgen -W \"$value_source\" -- \"$cur\") )~%" indent)
+    (format out "~A    for comp_value in \"${value_source[@]}\"; do~%" indent)
+    (format out "~A      [[ -n \"$comp_value\" && \"$comp_value\" == \"$cur\"* ]] && COMPREPLY+=(\"$comp_value\")~%" indent)
+    (format out "~A    done~%" indent)
     (format out "~A  fi~%" indent)
     (format out "~A  return 0~%" indent)
     (format out "~Afi~%" indent)))
@@ -57,10 +74,10 @@ separated value (`--option <TAB>`) actually completes its candidates."
         ;; typing an option there (`app -<TAB>`), which must fall through to the
         ;; global-option completion below.
         (format out "  if (( cword == 1 )) && [[ \"$cur\" != -* ]]; then~%")
-        (format out "    COMPREPLY=( $(compgen -W ~A -- \"$cur\") )~%"
-                (%completion-shell-quote
-                 (%completion-space-joined
-                  (%completion-visible-command-tokens app))))
+        (write-string (%completion-bash-static-compreply-source
+                       (%completion-visible-command-tokens app)
+                       "    " :replace-p t)
+                      out)
         (format out "    return 0~%")
         (format out "  fi~%"))
       (format out "  if [[ \"$cur\" == -* ]]; then~%")
@@ -75,25 +92,25 @@ separated value (`--option <TAB>`) actually completes its candidates."
             (format out "      ~A) ;;~%"
                     (%completion-case-labels (%completion-visible-command-tokens app)))
             (format out "      *)~%")
-            (format out "        COMPREPLY=( $(compgen -W ~A -- \"$cur\") )~%"
-                    (%completion-shell-quote
-                     (%completion-space-joined
-                      (%completion-command-option-tokens app nil))))
+            (write-string (%completion-bash-static-compreply-source
+                           (%completion-command-option-tokens app nil)
+                           "        " :replace-p t)
+                          out)
             (format out "        return 0~%")
             (format out "        ;;~%")
             (format out "    esac~%"))
           (progn
-            (format out "    COMPREPLY=( $(compgen -W ~A -- \"$cur\") )~%"
-                    (%completion-shell-quote
-                     (%completion-space-joined
-                      (%completion-command-option-tokens app nil))))
+            (write-string (%completion-bash-static-compreply-source
+                           (%completion-command-option-tokens app nil)
+                           "    " :replace-p t)
+                          out)
             (format out "    return 0~%")))
       (format out "  fi~%")
       (let ((positional-values (%completion-app-positional-values app)))
         (when positional-values
-          (format out "  COMPREPLY+=( $(compgen -W ~A -- \"$cur\") )~%"
-                  (%completion-shell-quote
-                   (%completion-space-joined positional-values)))))
+          (write-string (%completion-bash-static-compreply-source
+                         positional-values "  ")
+                        out)))
       (when (%completion-app-positional-hint-p app :file)
         (format out "  COMPREPLY+=( $(compgen -f -- \"$cur\") )~%"))
       (when (%completion-app-positional-hint-p app :dir)
@@ -101,9 +118,8 @@ separated value (`--option <TAB>`) actually completes its candidates."
 
 (defun %completion-bash-scope-option-tokens (scope-options app)
   "Visible option tokens for SCOPE-OPTIONS plus APP's built-in tokens."
-  (%completion-space-joined
-   (append (%completion-visible-option-tokens scope-options)
-           (%completion-option-tokens-for-specs (built-in-option-specs app)))))
+  (append (%completion-visible-option-tokens scope-options)
+          (%completion-option-tokens-for-specs (built-in-option-specs app))))
 
 (defun %completion-bash-command-node (app command scope-options depth prefix)
   "Recursively render the bash case block for COMMAND at word index DEPTH.
@@ -130,11 +146,13 @@ tree. A command with subcommands offers their names at DEPTH+1 and recurses."
       (write-string (%completion-bash-expect-value-source "      ") out)
       (when subcommands
         (format out "      if (( cword == ~A )); then~%" child-depth)
-        (format out "        COMPREPLY+=( $(compgen -W ~A -- \"$cur\") )~%"
-                (%completion-shell-quote
-                 (%completion-space-joined
-                  (loop for sub in subcommands
-                        append (%completion-command-names sub)))))
+        (write-string (%completion-bash-static-compreply-source
+                       (let (names)
+                         (dolist (sub subcommands (nreverse names))
+                           (dolist (name (%completion-command-names sub))
+                             (push name names))))
+                       "        ")
+                      out)
         (format out "      fi~%")
         (dolist (sub subcommands)
           (write-string (%completion-bash-command-node
@@ -142,15 +160,16 @@ tree. A command with subcommands offers their names at DEPTH+1 and recurses."
                          (format nil "~A/~A" prefix (command-name sub)))
                         out)))
       (format out "      if [[ \"$cur\" == -* ]]; then~%")
-      (format out "        COMPREPLY=( $(compgen -W ~A -- \"$cur\") )~%"
-              (%completion-shell-quote
-               (%completion-bash-scope-option-tokens options app)))
+      (write-string (%completion-bash-static-compreply-source
+                     (%completion-bash-scope-option-tokens options app)
+                     "        " :replace-p t)
+                    out)
       (format out "      fi~%")
       (let ((positional-values (%completion-command-positional-values command)))
         (when positional-values
-          (format out "      COMPREPLY+=( $(compgen -W ~A -- \"$cur\") )~%"
-                  (%completion-shell-quote
-                   (%completion-space-joined positional-values)))))
+          (write-string (%completion-bash-static-compreply-source
+                         positional-values "      ")
+                        out)))
       (when (%completion-command-positional-hint-p command :file)
         (format out "      COMPREPLY+=( $(compgen -f -- \"$cur\") )~%"))
       (when (%completion-command-positional-hint-p command :dir)
@@ -173,16 +192,16 @@ write the script to it and return no values."
       (with-output-to-string (string-stream)
         (render-bash-completion app string-stream))))
   (let ((function-name (%completion-function-name app))
-        (app-name (app-name app)))
+        (app-name (%completion-control-safe-string (app-name app))))
       (format stream "#!/usr/bin/env bash~%")
       (format stream "# bash completion for ~A~%" app-name)
       (format stream "~A() {~%" function-name)
-      (format stream "  local cur prev words cword value_source expect_value expect_optional_value comp_dir comp_dynamic~%")
+      (format stream "  local cur prev words cword expect_value expect_optional_value comp_dir comp_dynamic comp_value~%")
+      (format stream "  local -a value_source comp_values~%")
       ;; -s makes _init_completion split `--opt=value` so an attached value
       ;; completes through the same prev-word path as a separated one.
       (format stream "  _init_completion -s || return~%")
-      (write-string (or (%completion-bash-cur-case-source app) "")
-                    stream)
+      (write-string (%completion-bash-cur-case-source app) stream)
       (dolist (command (%completion-visible-commands app))
         (write-string (%completion-bash-command-case-source app command)
                       stream))

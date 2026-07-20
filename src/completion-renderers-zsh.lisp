@@ -21,13 +21,17 @@
   "Assign the NAME:description specs of SUBCOMMANDS to `subcommand_specs`."
   (%completion-zsh-assignment-source
    "subcommand_specs"
-   (loop for command in subcommands
-         append (cons (format nil "~A:~A"
-                              (command-name command)
-                              (or (command-description command) ""))
-                      (loop for alias in (command-aliases command)
-                            collect (format nil "~A:alias for ~A"
-                                            alias (command-name command)))))))
+   (let (specs)
+     (dolist (command subcommands (nreverse specs))
+       (push (format nil "~A:~A"
+                     (%completion-zsh-describe-field (command-name command))
+                     (%completion-zsh-describe-field (command-description command)))
+             specs)
+       (dolist (alias (command-aliases command))
+         (push (format nil "~A:alias for ~A"
+                       (%completion-zsh-describe-field alias)
+                       (%completion-zsh-describe-field (command-name command)))
+               specs))))))
 
 (defun %completion-zsh-command-node (app command scope-options depth)
   "Render the `NAME) ... ;;' case clause for COMMAND at word index DEPTH.
@@ -87,7 +91,7 @@ write the script to it and return no values."
       (with-output-to-string (string-stream)
         (render-zsh-completion app string-stream))))
   (let ((function-name (%completion-function-name app))
-        (app-name (app-name app)))
+        (app-name (%completion-control-safe-string (app-name app))))
     (format stream "#compdef ~A~%" app-name)
     (format stream "~A() {~%" function-name)
     (format stream "  local current_word previous_word command_word~%")
@@ -146,5 +150,7 @@ write the script to it and return no values."
           (when (%completion-app-positional-hint-p app :dir)
             (format stream "  _files -/~%"))))
     (format stream "}~%")
-    (format stream "compdef ~A ~A~%" function-name app-name)
+    (format stream "compdef ~A ~A~%"
+            function-name
+            (%completion-shell-quote app-name))
     (values)))

@@ -17,9 +17,10 @@
                (app-name app))))
 
 (defun %completion-option-items-for-specs (options names-fn item-fn)
-  (loop for option in options append
-        (loop for name in (funcall names-fn option)
-              collect (funcall item-fn option name))))
+  (let (items)
+    (dolist (option options (nreverse items))
+      (dolist (name (funcall names-fn option))
+        (push (funcall item-fn option name) items)))))
 
 (defun %completion-option-tokens-for-specs (options)
   (%completion-option-items-for-specs
@@ -57,13 +58,40 @@
    :test #'string=))
 
 (defun %completion-visible-command-tokens (app)
-  (loop for command in (%completion-visible-commands app)
-        append (%completion-command-names command)))
+  (let (tokens)
+    (dolist (command (%completion-visible-commands app) (nreverse tokens))
+      (push (command-name command) tokens)
+      (dolist (alias (command-aliases command))
+        (push alias tokens)))))
+
+(defun %completion-control-safe-string (value)
+  "Return VALUE as a single printable completion protocol field."
+  (let ((string (if value (princ-to-string value) "")))
+    (with-output-to-string (out)
+      (loop for char across string
+            for code = (char-code char)
+            do (cond
+                 ((or (char= char #\Newline)
+                      (char= char #\Return)
+                      (char= char #\Tab))
+                  (write-char #\Space out))
+                 ((or (< code 32)
+                      (= code 127)
+                      (and (>= code 128) (< code 160)))
+                  nil)
+                 (t
+                  (write-char char out)))))))
+
+(defun %completion-zsh-describe-field (value)
+  "Return VALUE as one safe `_describe` NAME or DESCRIPTION field."
+  (with-output-to-string (out)
+    (loop for char across (%completion-control-safe-string value)
+          do (write-char (if (char= char #\:) #\Space char) out))))
 
 (defun %completion-shell-quote (string)
   (with-output-to-string (out)
     (write-char #\' out)
-    (loop for char across string
+    (loop for char across (%completion-control-safe-string string)
           do (if (char= char #\')
                  (write-string "'\"'\"'" out)
                  (write-char char out)))
@@ -72,6 +100,11 @@
 (defun %completion-space-joined (strings)
   (format nil "~{~A~^ ~}"
           (remove-duplicates strings :test #'string=)))
+
+(defun %completion-bash-array-literal (strings)
+  (format nil "(~{~A~^ ~})"
+          (mapcar #'%completion-shell-quote
+                  (remove-duplicates strings :test #'string=))))
 
 (defun %completion-case-labels (strings)
   (format nil "~{~A~^|~}"
@@ -95,12 +128,16 @@
   (mapcar #'car (%completion-positional-candidates positional)))
 
 (defun %completion-app-positional-values (app)
-  (loop for positional in (app-positionals app)
-        append (%completion-positional-candidate-values positional)))
+  (let (values)
+    (dolist (positional (app-positionals app) (nreverse values))
+      (dolist (value (%completion-positional-candidate-values positional))
+        (push value values)))))
 
 (defun %completion-command-positional-values (command)
-  (loop for positional in (command-positionals command)
-        append (%completion-positional-candidate-values positional)))
+  (let (values)
+    (dolist (positional (command-positionals command) (nreverse values))
+      (dolist (value (%completion-positional-candidate-values positional))
+        (push value values)))))
 
 (defun %completion-positionals-hint-p (positionals hint)
   "True when any positional in POSITIONALS declares :value-hint HINT."
@@ -114,10 +151,7 @@
   (%completion-positionals-hint-p (command-positionals command) hint))
 
 (defun %completion-option-value-source (option)
-  (let ((values (%completion-option-candidate-values option)))
-    (and values
-         (%completion-shell-quote
-          (%completion-space-joined values)))))
+  (%completion-option-candidate-values option))
 
 (defun %completion-option-token-patterns (option &key command-name attached-p)
   "Case-label patterns matching OPTION's tokens (optionally command-scoped)."
@@ -168,5 +202,6 @@
                            (format nil "~A comp_dynamic=~A" expect
                                    (%completion-shell-quote
                                     (string-downcase (symbol-name (option-key option))))))
-                          (value-source (format nil "~A value_source=~A" expect value-source))
+                          (value-source (format nil "~A value_source=~A" expect
+                                                (%completion-bash-array-literal value-source)))
                           (dir-hint-p (format nil "~A comp_dir=1" expect))))))))))))

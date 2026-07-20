@@ -14,7 +14,7 @@
         ("zsh"
          "#compdef demo"
          "_demo_completion() {"
-         "compdef _demo_completion demo")
+         "compdef _demo_completion 'demo'")
         ("fish"
          "complete -c 'demo' -f")
         ("powershell"
@@ -106,7 +106,13 @@
                        "$commandOptions = @{"
                        "'compile' = @('--output', '-o')"
                        "'build' = @('--output', '-o')"
+                       "$_.StartsWith($wordToComplete, [System.StringComparison]::Ordinal)"
                        "CompletionResult")))
+
+  (it "does not treat PowerShell completion prefixes as wildcard patterns"
+    (let ((text (render-powershell-completion (make-app :name "demo"))))
+      (assert-searches text "$_.StartsWith($wordToComplete, [System.StringComparison]::Ordinal)")
+      (assert-not-searches text "-like \"$wordToComplete*\"")))
 
   (it "omits hidden entities from the PowerShell completer"
     (let* ((app (make-app :name "demo"
@@ -164,6 +170,28 @@
                           :commands (list (make-command :name "ghost" :hidden-p t))))
            (text (render-elvish-completion app)))
       (assert-not-searches text "secret" "ghost")))
+
+  (it "strips controls from flat shell completion static fields"
+    (let* ((bad-candidate (format nil "bad~Cvalue" #\Newline))
+           (bad-description (format nil "first~Csecond~Cdone" #\Tab #\Esc))
+           (app (make-app :name "demo"
+                          :global-options
+                          (list (make-option :name "verbose"
+                                             :kind :flag
+                                             :description bad-description))
+                          :positionals
+                          (list (make-positional :key :target
+                                                 :completion-candidates
+                                                 (list bad-candidate)))
+                          :commands (list (make-command :name "run"))))
+           (powershell (render-powershell-completion app))
+           (nushell (render-nushell-completion app))
+           (elvish (render-elvish-completion app)))
+      (dolist (text (list powershell nushell elvish))
+        (assert-not-searches text bad-candidate bad-description))
+      (assert-searches powershell "'bad value'")
+      (assert-searches nushell "\"bad value\"" "first seconddone")
+      (assert-searches elvish "'bad value'")))
 
   (it "renderers return the script as a string when no stream is given"
     (let ((app (make-app :name "demo"

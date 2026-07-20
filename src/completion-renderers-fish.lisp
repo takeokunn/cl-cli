@@ -3,7 +3,8 @@
 (defun %fish-command-seen-condition (command)
   "Fish predicate true once COMMAND (by any of its names) has been used."
   (format nil "__fish_seen_subcommand_from ~{~A~^ ~}"
-          (%completion-command-names command)))
+          (mapcar #'%completion-shell-quote
+                  (%completion-command-names command))))
 
 (defun %fish-path-seen-condition (path)
   "Fish predicate true when every command in PATH has been seen.
@@ -32,17 +33,20 @@ been typed. A nested level requires each ancestor to have been seen."
               (%completion-shell-quote app-name)
               (%completion-shell-quote condition)))))
 
-(defun %render-fish-command-tree (app path commands stream)
+(defun %render-fish-command-tree (app reversed-path commands stream)
   "Recursively emit fish completions for COMMANDS (children of PATH's leaf).
 
 Offers each visible command's name (and aliases) when the ancestor path is seen
 and no sibling at this level has been chosen yet, then emits each command's
 options and positionals, and recurses into its subcommands."
   (let ((app-name (app-name app))
+        (path (nreverse (copy-list reversed-path)))
         (visible (remove-if #'command-hidden-p commands)))
     (when visible
-      (let* ((sibling-names (loop for command in visible
-                                  append (%completion-command-names command)))
+      (let* ((sibling-names (let (names)
+                              (dolist (command visible (nreverse names))
+                                (dolist (name (%completion-command-names command))
+                                  (push (%completion-shell-quote name) names)))))
              (offer-condition
                (format nil "~A; and not __fish_seen_subcommand_from ~{~A~^ ~}"
                        (%fish-path-seen-condition path)
@@ -60,7 +64,7 @@ options and positionals, and recurses into its subcommands."
             (%render-fish-option-lines app (command-options command) seen stream)
             (%render-fish-command-values app command seen stream))
           (%render-fish-command-tree app
-                                     (append path (list command))
+                                     (cons command reversed-path)
                                      (command-subcommands command)
                                      stream))))))
 

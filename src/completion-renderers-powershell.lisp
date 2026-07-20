@@ -14,7 +14,7 @@ PowerShell escapes an embedded single quote by doubling it, unlike the POSIX
 shells (which close-escape-reopen); this must not reuse %COMPLETION-SHELL-QUOTE."
   (with-output-to-string (out)
     (write-char #\' out)
-    (loop for char across string
+    (loop for char across (%completion-control-safe-string string)
           do (if (char= char #\')
                  (write-string "''" out)
                  (write-char char out)))
@@ -81,7 +81,7 @@ Hidden commands and options are omitted."
     (return-from render-powershell-completion
       (with-output-to-string (string-stream)
         (render-powershell-completion app string-stream))))
-  (let ((app-name (app-name app)))
+  (let ((app-name (%completion-control-safe-string (app-name app))))
     (format stream "# PowerShell completion for ~A~%" app-name)
     (format stream "Register-ArgumentCompleter -Native -CommandName ~A -ScriptBlock {~%"
             (%completion-powershell-quote app-name))
@@ -101,7 +101,7 @@ Hidden commands and options are omitted."
     (format stream "    }~%")
     (format stream "    $candidates = $commands + $globalOptions + $positionals~%")
     (format stream "    if ($selected) { $candidates = $globalOptions + $commandOptions[$selected] }~%")
-    (format stream "    $candidates | Where-Object { $_ -like \"$wordToComplete*\" } | Sort-Object -Unique | ForEach-Object {~%")
+    (format stream "    $candidates | Where-Object { $_.StartsWith($wordToComplete, [System.StringComparison]::Ordinal) } | Sort-Object -Unique | ForEach-Object {~%")
     (format stream "        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)~%")
     (format stream "    }~%")
     (format stream "}~%")
